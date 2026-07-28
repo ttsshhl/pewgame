@@ -101,6 +101,13 @@
   .wallet-box{background:var(--panel);border:1px solid rgba(153,69,255,.5);border-radius:12px;padding:14px 18px;max-width:560px}
   .wallet-box .addr{color:var(--sol2);font-size:12px;word-break:break-all}
   .wallet-box .st{font-size:11px;color:var(--dim);margin-top:6px;line-height:1.7}
+  .task-row{display:flex;justify-content:space-between;align-items:center;gap:10px;
+    font-size:12px;color:var(--text);padding:7px 0;border-bottom:1px dashed rgba(138,92,255,.2)}
+  .task-btn{font-family:'Press Start 2P',monospace;font-size:8px;padding:8px 10px;border-radius:8px;
+    background:linear-gradient(180deg,var(--gold),#d9a112);color:#241a00;border:none;cursor:pointer;
+    box-shadow:0 3px 0 #8a6a06}
+  .task-btn:hover{transform:translateY(-1px)}
+  .task-done{color:var(--green);font-size:11px;font-weight:700}
   .err{color:var(--danger);font-size:11px;max-width:520px;line-height:1.6}
 
   /* магазин */
@@ -258,6 +265,10 @@
 const LISTING_DATE = new Date('2026-09-01T12:00:00Z');
 const roundReward = r => 150 + r * 75;
 const KILL_REWARD = 30;
+/* ── награды за продвижение ── */
+const TG_GROUP_URL = 'https://t.me/pewprotocol';   // ЗАМЕНИ на ссылку своей группы
+const REW_X = 500, REW_TG = 300, REW_REF = 400;
+const SITE_URL = () => location.origin + location.pathname;
 
 const WEAPONS = {
   usp:   {key:'1', name:'USP-P',        price:0,    dmg:26,  rate:280,  mag:12, reload:1200, auto:false, spread:.012, len:.5},
@@ -325,7 +336,7 @@ const store = {
 };
 
 /* ═══════════ PHANTOM / ПРОФИЛЬ ═══════════ */
-let profile = { name:'', wallet:'', tokens:0, bestRound:0, kills:0, weapons:['usp','ak'], equipped:'ak', grenadeCap:3 };
+let profile = { name:'', wallet:'', tokens:0, bestRound:0, kills:0, weapons:['usp','ak'], equipped:'ak', grenadeCap:3, tasks:{}, refsCredited:0, refBy:'' };
 const short = a => a ? a.slice(0,4)+'…'+a.slice(-4) : '';
 const lbKey = id => 'lb:' + id.toLowerCase().replace(/[^a-zа-яё0-9_-]/gi,'_').slice(0,40);
 const playerId = () => profile.wallet || profile.name;
@@ -373,6 +384,7 @@ async function connectPhantom(){
     $('hud-wallet').innerHTML = 'Кошелёк: <b>'+short(addr)+'</b>';
     await loadProfileFor(addr);
     await saveProfile();
+    await maybeAttachRef(); checkReferrals();
     updateTokensHUD();
   }catch(e){
     err.textContent = 'Подключение отклонено или не удалось: ' + (e.message||e);
@@ -385,6 +397,8 @@ async function loadProfileFor(id){
   if(!profile.weapons.includes('usp')) profile.weapons.unshift('usp');
   if(!profile.weapons.includes('ak')) profile.weapons.push('ak');
   if(!profile.grenadeCap) profile.grenadeCap = 3;
+  if(!profile.tasks) profile.tasks = {};
+  if(!profile.refsCredited) profile.refsCredited = 0;
   if(!profile.weapons.includes(profile.equipped)) profile.equipped = 'ak';
 }
 async function saveProfile(){
@@ -429,6 +443,61 @@ async function renderLeaderboard(){
       return `<tr${me}><td${rc}>${i+1}</td><td>${esc(e.name)}</td><td class="addr">${e.wallet?short(e.wallet):'гость'}</td><td>${e.bestRound||0}</td><td class="tok">${fmt(e.tokens)}</td></tr>`;
     }).join('');
   }catch(e){ body.innerHTML='<tr><td colspan="5" class="empty">Лидерборд недоступен</td></tr>'; }
+}
+/* ── рефералка ── */
+const urlRef = new URLSearchParams(location.search).get('ref');
+if(urlRef){ try{ localStorage.setItem('pew-pending-ref', urlRef); }catch(e){} }
+function refLink(){ return SITE_URL() + '?ref=' + lbKey(playerId()); }
+async function maybeAttachRef(){
+  if(!playerId() || profile.refBy) return;
+  let r=null; try{ r=localStorage.getItem('pew-pending-ref'); }catch(e){}
+  if(!r) return;
+  const myKey = lbKey(playerId());
+  if(sanitize(r)===myKey){ localStorage.removeItem('pew-pending-ref'); return; } // сам себя не приглашаешь
+  profile.refBy = sanitize(r);
+  try{ localStorage.removeItem('pew-pending-ref'); }catch(e){}
+  if(FIREBASE_DB_URL)
+    fetch(`${FIREBASE_DB_URL}/pew/refs/${profile.refBy}/${myKey}.json`,{method:'PUT',body:JSON.stringify({t:Date.now(),name:profile.name})});
+  await saveProfile();
+}
+async function checkReferrals(){
+  if(!FIREBASE_DB_URL || !playerId()) return profile.refsCredited||0;
+  try{
+    const r = await fetch(`${FIREBASE_DB_URL}/pew/refs/${lbKey(playerId())}.json`);
+    if(!r.ok) return profile.refsCredited||0;
+    const v = await r.json() || {};
+    const n = Object.keys(v).length;
+    if(n > (profile.refsCredited||0)){
+      const add = (n - (profile.refsCredited||0)) * REW_REF;
+      profile.tokens += add; profile.refsCredited = n;
+      updateTokensHUD(); sfxBuy(); await saveProfile();
+      const kf=document.createElement('div');
+      kf.innerHTML=`🤝 друг зашёл по твоей ссылке <b>+${add} $PEW</b>`;
+      const fd=$('killfeed'); if(fd){ fd.prepend(kf); setTimeout(()=>kf.remove(),4000); }
+    }
+    return n;
+  }catch(e){ return profile.refsCredited||0; }
+}
+async function doShareX(){
+  const txt = encodeURIComponent(`Фармлю $PEW в браузерном FPS PEW PROTOCOL 🔫 Успей нафармить до листинга! Мой баланс: ${fmt(profile.tokens)} $PEW`);
+  const url = encodeURIComponent(refLink());
+  window.open(`https://twitter.com/intent/tweet?text=${txt}&url=${url}`,'_blank');
+  if(!profile.tasks.x){
+    profile.tasks.x=true; profile.tokens+=REW_X;
+    updateTokensHUD(); sfxBuy(); await saveProfile(); renderProfile();
+  }
+}
+async function doJoinTG(){
+  window.open(TG_GROUP_URL,'_blank');
+  if(!profile.tasks.tg){
+    profile.tasks.tg=true; profile.tokens+=REW_TG;
+    updateTokensHUD(); sfxBuy(); await saveProfile(); renderProfile();
+  }
+}
+async function copyRefLink(){
+  const link=refLink();
+  try{ await navigator.clipboard.writeText(link); showMsg('ССЫЛКА СКОПИРОВАНА',1500); }
+  catch(e){ prompt('Скопируй ссылку:', link); }
 }
 const esc = s => String(s).replace(/[<>&"]/g,c=>({'<':'&lt;','>':'&gt;','&':'&amp;','"':'&quot;'}[c]));
 const fmt = n => Number(n||0).toLocaleString('ru-RU');
@@ -1255,6 +1324,7 @@ function renderProfile(){
   let rank='—';
   const idx=lastLbRows.findIndex(e=>(profile.wallet&&e.wallet===profile.wallet)||(!profile.wallet&&e.name===profile.name));
   if(idx>=0) rank=`#${idx+1} из ${lastLbRows.length}`;
+  const refs=profile.refsCredited||0;
   $('profile-body').innerHTML=`
     <div class="st" style="font-size:14px"><b style="color:var(--text)">${esc(profile.name||'—')}</b></div>
     <div class="addr">${profile.wallet?esc(profile.wallet):'кошелёк не подключен — подключи Phantom на стартовом экране'}</div>
@@ -1262,11 +1332,31 @@ function renderProfile(){
     Место в общем лидерборде: <b style="color:var(--cyan)">${rank}</b><br>
     Фраги за всё время: <b>${fmt(profile.kills)}</b> • Рекорд: раунд <b>${profile.bestRound}</b><br>
     Гранаты: <b>${profile.grenadeCap||3} шт/раунд</b></div>
-    <div class="st">Арсенал: <b style="color:var(--gold)">${owned}</b></div>`;
+    <div class="st">Арсенал: <b style="color:var(--gold)">${owned}</b></div>
+    <div class="st" style="border-top:1px solid rgba(138,92,255,.3);margin-top:10px;padding-top:10px">
+      <b style="color:var(--violet)">◈ ЗАДАНИЯ ЗА $PEW</b>
+    </div>
+    <div class="task-row">
+      <span>𝕏 Пост о игре в X</span>
+      ${profile.tasks.x?'<span class="task-done">✅ +'+REW_X+'</span>':'<button class="task-btn" id="task-x">+'+REW_X+' $PEW</button>'}
+    </div>
+    <div class="task-row">
+      <span>✈️ Вступить в Telegram-группу</span>
+      ${profile.tasks.tg?'<span class="task-done">✅ +'+REW_TG+'</span>':'<button class="task-btn" id="task-tg">+'+REW_TG+' $PEW</button>'}
+    </div>
+    <div class="task-row">
+      <span>🤝 Пригласить друга (${'+'+REW_REF} за каждого)</span>
+      <button class="task-btn" id="task-ref">КОПИРОВАТЬ ССЫЛКУ</button>
+    </div>
+    <div class="st">Приглашено друзей: <b style="color:var(--gold)">${refs}</b> • начислено <b style="color:var(--gold)">${fmt(refs*REW_REF)} $PEW</b><br>
+    Друг должен открыть твою ссылку и войти в игру (ник или Phantom) — награда придёт автоматически.</div>`;
+  const bx=$('task-x'); if(bx) bx.onclick=doShareX;
+  const bt=$('task-tg'); if(bt) bt.onclick=doJoinTG;
+  const br=$('task-ref'); if(br) br.onclick=copyRefLink;
 }
 function toggleProfile(){
   const ov=$('ov-profile');
-  if(ov.classList.contains('hidden')){ renderProfile(); ov.classList.remove('hidden'); unlockPointer(); }
+  if(ov.classList.contains('hidden')){ checkReferrals().then(()=>renderProfile()); renderProfile(); ov.classList.remove('hidden'); unlockPointer(); }
   else{ ov.classList.add('hidden'); if(state==='play') lockPointer(); }
 }
 
@@ -1753,6 +1843,7 @@ async function ensureIdentity(){
   if(profile.name!==n){ await loadProfileFor(n); profile.name=n; }
   $('hud-wallet').innerHTML='Кошелёк: <b>гость ('+esc(profile.name)+')</b>';
   await saveProfile(); updateTokensHUD();
+  await maybeAttachRef(); checkReferrals();
   buildGun(profile.equipped);
   $('hud-wname').textContent=WEAPONS[profile.equipped].name;
   return true;
@@ -1795,8 +1886,10 @@ $('hud-tok-chip').onclick=()=>{ if(state!=='menu') toggleProfile(); };
     $('hud-wallet').innerHTML='Кошелёк: <b>'+short(profile.wallet)+'</b>';
   }
   if(profile.name&&!profile.wallet) $('name-input').value=profile.name;
+  if(playerId()){ await maybeAttachRef(); checkReferrals(); }
   renderLeaderboard();
   setInterval(renderLeaderboard,10000);
+  setInterval(()=>{ if(playerId()) checkReferrals(); }, 30000);
   requestAnimationFrame(loop);
 })();
 </script>
