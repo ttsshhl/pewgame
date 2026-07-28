@@ -262,7 +262,7 @@ const WDESC = {
    ОБЩИЙ лидерборд → Firebase Realtime Database через REST (без SDK).
    Впиши URL своей базы ниже. Если оставить '' — лидерборд будет локальным
    (каждый игрок видит только себя). */
-const FIREBASE_DB_URL = ''; // пример: 'https://pewprotocol-default-rtdb.europe-west1.firebasedatabase.app'
+const FIREBASE_DB_URL = 'https://pewgame-32ce2-default-rtdb.europe-west1.firebasedatabase.app';
 
 const sanitize = k => String(k).replace(/[^a-zA-Z0-9_-]/g,'_');
 const store = {
@@ -367,9 +367,19 @@ async function saveProfile(){
 async function renderLeaderboard(){
   const body = $('lb-body');
   try{
-    const keys = await store.list('lb:', true);
-    const rows = [];
-    for(const k of keys.slice(0,60)){ const e = await store.get(k, true); if(e && e.name) rows.push(e); }
+    let rows = [];
+    if(FIREBASE_DB_URL){
+      // одна загрузка всей таблицы вместо запроса на каждого игрока
+      const r = await fetch(`${FIREBASE_DB_URL}/pew.json`);
+      const all = r.ok ? await r.json() : null;
+      if(all) rows = Object.entries(all)
+        .filter(([k])=>k.startsWith('lb_'))
+        .map(([,v])=>v)
+        .filter(e=>e && e.name);
+    } else {
+      const keys = await store.list('lb:', true);
+      for(const k of keys.slice(0,60)){ const e = await store.get(k, true); if(e && e.name) rows.push(e); }
+    }
     rows.sort((a,b)=>b.tokens-a.tokens);
     if(!rows.length){ body.innerHTML='<tr><td colspan="5" class="empty">Пока пусто. Стань первым фармером $PEW.</td></tr>'; return; }
     const myId = playerId();
@@ -1098,7 +1108,7 @@ $('btn-shop-close').onclick=toggleShop;
   }
   if(profile.name&&!profile.wallet) $('name-input').value=profile.name;
   renderLeaderboard();
-  setInterval(renderLeaderboard,20000);
+  setInterval(renderLeaderboard,10000);
   requestAnimationFrame(loop);
 })();
 </script>
