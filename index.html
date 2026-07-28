@@ -229,7 +229,7 @@
       <thead><tr><th>#</th><th>Игрок</th><th>Кошелёк</th><th>Рекорд</th><th class="tok">$PEW 🔒</th></tr></thead>
       <tbody id="lb-body"><tr><td colspan="5" class="empty">Загрузка…</td></tr></tbody>
     </table>
-    <div class="note">Лидерборд общий: ники, адреса и балансы видны всем игрокам. Балансы заморожены до листинга — на TGE распределение уйдёт аирдропом на привязанные кошельки.</div>
+    <div class="note">Лидерборд общий: ники, адреса и балансы видны всем игрокам. Балансы заморожены до листинга — на TGE распределение уйдёт аирдропом на привязанные кошельки. <span id="fb-warn" style="color:var(--danger)"></span></div>
   </div>
 </main>
 
@@ -265,26 +265,29 @@ const WDESC = {
 const FIREBASE_DB_URL = 'https://pewgame-32ce2-default-rtdb.europe-west1.firebasedatabase.app';
 
 const sanitize = k => String(k).replace(/[^a-zA-Z0-9_-]/g,'_');
+let fbError = false; // не проходит запись/чтение в Firebase
 const store = {
   async get(k, shared=false){
     try{
       if(shared && FIREBASE_DB_URL){
         const r = await fetch(`${FIREBASE_DB_URL}/pew/${sanitize(k)}.json`);
-        if(!r.ok) return null;
+        if(!r.ok){ fbError=true; console.error('Firebase GET',r.status,await r.text()); return null; }
         return await r.json();
       }
       const v = localStorage.getItem((shared?'pew-s:':'pew-p:')+k);
       return v ? JSON.parse(v) : null;
-    }catch(e){ return null; }
+    }catch(e){ if(shared&&FIREBASE_DB_URL){fbError=true;console.error('Firebase GET',e);} return null; }
   },
   async set(k, v, shared=false){
     try{
       if(shared && FIREBASE_DB_URL){
-        await fetch(`${FIREBASE_DB_URL}/pew/${sanitize(k)}.json`, {method:'PUT', body:JSON.stringify(v)});
+        const r = await fetch(`${FIREBASE_DB_URL}/pew/${sanitize(k)}.json`, {method:'PUT', body:JSON.stringify(v)});
+        if(!r.ok){ fbError=true; console.error('Firebase PUT',r.status,await r.text()); }
+        else fbError=false;
         return;
       }
       localStorage.setItem((shared?'pew-s:':'pew-p:')+k, JSON.stringify(v));
-    }catch(e){}
+    }catch(e){ if(shared&&FIREBASE_DB_URL){fbError=true;console.error('Firebase PUT',e);} }
   },
   async list(prefix, shared=false){
     try{
@@ -315,14 +318,29 @@ function getPhantom(){
   if(window.solana && window.solana.isPhantom) return window.solana;
   return null;
 }
+// Phantom инжектится асинхронно — ждём до 3 секунд
+async function waitPhantom(ms=3000){
+  const t0=Date.now();
+  while(Date.now()-t0<ms){
+    const p=getPhantom(); if(p) return p;
+    await new Promise(r=>setTimeout(r,150));
+  }
+  return getPhantom();
+}
 async function connectPhantom(){
   const err = $('phantom-err');
-  err.textContent = '';
-  const provider = getPhantom();
+  err.textContent = 'Ищу Phantom…';
+  // Phantom НЕ работает на http — только https или file://
+  if(location.protocol==='http:'){
+    err.innerHTML = '⚠ Сайт открыт по <b>http</b> — Phantom на незащищённых страницах не инжектится. Открой <a href="https://'+location.host+location.pathname+'" style="color:var(--sol2)">https://'+location.host+'</a> (в GitHub Pages включи Enforce HTTPS, когда станет доступно). Пока можно войти гостем.';
+    return;
+  }
+  const provider = await waitPhantom();
   if(!provider){
     err.innerHTML = 'Phantom не найден. Установи расширение <a href="https://phantom.app" target="_blank" style="color:var(--sol2)">phantom.app</a> и обнови страницу. На телефоне открой этот сайт через встроенный браузер приложения Phantom. Пока можно войти гостем.';
     return;
   }
+  err.textContent = '';
   try{
     const resp = await provider.connect();
     const addr = resp.publicKey.toString();
@@ -371,16 +389,21 @@ async function renderLeaderboard(){
     if(FIREBASE_DB_URL){
       // одна загрузка всей таблицы вместо запроса на каждого игрока
       const r = await fetch(`${FIREBASE_DB_URL}/pew.json`);
+      if(!r.ok){ fbError=true; console.error('Firebase LB',r.status,await r.text()); }
       const all = r.ok ? await r.json() : null;
-      if(all) rows = Object.entries(all)
+      if(all){ fbError=false;
+        rows = Object.entries(all)
         .filter(([k])=>k.startsWith('lb_'))
         .map(([,v])=>v)
         .filter(e=>e && e.name);
+      }
     } else {
       const keys = await store.list('lb:', true);
       for(const k of keys.slice(0,60)){ const e = await store.get(k, true); if(e && e.name) rows.push(e); }
     }
     rows.sort((a,b)=>b.tokens-a.tokens);
+    const warn=$('fb-warn');
+    if(warn) warn.textContent = fbError ? '⚠ Нет связи с базой лидерборда: проверь Rules в Firebase (test mode истекает через 30 дней) и консоль браузера (F12 → Network).' : '';
     if(!rows.length){ body.innerHTML='<tr><td colspan="5" class="empty">Пока пусто. Стань первым фармером $PEW.</td></tr>'; return; }
     const myId = playerId();
     body.innerHTML = rows.slice(0,15).map((e,i)=>{
@@ -607,47 +630,72 @@ const enemies=[], enemyHitMeshes=[];
 const pick=a=>a[Math.floor(Math.random()*a.length)];
 
 function spawnEnemy(round){
-  const skin=M(pick(SKINS)), shirt=M(pick(SHIRTS)), pants=M(pick(PANTS)), hair=M(pick(HAIRS));
+  const skinC=pick(SKINS);
+  const skin=M(skinC), shirt=M(pick(SHIRTS)), pants=M(pick(PANTS));
+  const vestM=M(0x39402f), helmM=M(0x49523c), bootM=M(0x191410), gunM=M(0x1d1d21);
   const g=new THREE.Group();
   const idx=enemies.length;
-  const parts=[];
-  const reg=(m,part)=>{ m.userData={enemyIdx:idx,part}; m.castShadow=true; parts.push(m); enemyHitMeshes.push(m); g.add(m); return m; };
-  // ноги (пивот в бедре)
-  const legGeo=()=>{ const ge=new THREE.BoxGeometry(.2,.85,.22); ge.translate(0,-.425,0); return ge; };
+  const reg=(m,part)=>{ m.userData={enemyIdx:idx,part}; m.castShadow=true; enemyHitMeshes.push(m); g.add(m); return m; };
+  const deco=m=>{ m.castShadow=true; g.add(m); return m; };
+  // ── ноги: цилиндры, пивот в бедре, ботинки как дети ног (качаются вместе) ──
+  const legGeo=()=>{ const ge=new THREE.CylinderGeometry(.105,.085,.88,10); ge.translate(0,-.44,0); return ge; };
   const legL=new THREE.Mesh(legGeo(),pants), legR=new THREE.Mesh(legGeo(),pants);
-  legL.position.set(-.13,.85,0); legR.position.set(.13,.85,0);
+  legL.position.set(-.13,.92,0); legR.position.set(.13,.92,0);
   legL.userData={enemyIdx:idx,part:'body'}; legR.userData={enemyIdx:idx,part:'body'};
   legL.castShadow=legR.castShadow=true;
+  const mkBoot=()=>{ const b=box(.2,.13,.32,bootM,0,-.9,.05); b.castShadow=true; return b; };
+  legL.add(mkBoot()); legR.add(mkBoot());
   g.add(legL,legR); enemyHitMeshes.push(legL,legR);
-  // ботинки
-  const bootL=box(.2,.12,.3, M(0x1a140e), -.13,.06,.03), bootR=box(.2,.12,.3, M(0x1a140e), .13,.06,.03);
-  bootL.castShadow=bootR.castShadow=true; g.add(bootL,bootR);
-  // торс (бронежилет поверх рубашки)
-  reg(box(.52,.62,.3, shirt, 0,1.16,0),'body');
-  const vest=box(.56,.4,.34, M(0x2f3529), 0,1.2,0); vest.castShadow=true; g.add(vest);
-  // руки (пивот в плече)
-  const armGeo=()=>{ const ge=new THREE.BoxGeometry(.15,.62,.16); ge.translate(0,-.31,0); return ge; };
+  // ── таз и торс ──
+  deco(box(.42,.16,.26, pants, 0,.98,0));                       // пояс
+  reg(box(.48,.6,.27, shirt, 0,1.3,0),'body');                  // грудная клетка
+  deco(new THREE.Mesh(new THREE.SphereGeometry(.1,8,8),shirt)).position.set(-.27,1.55,0); // плечи
+  deco(new THREE.Mesh(new THREE.SphereGeometry(.1,8,8),shirt)).position.set(.27,1.55,0);
+  // бронежилет с подсумками
+  deco(box(.52,.42,.32, vestM, 0,1.3,0));
+  deco(box(.1,.12,.05, vestM, -.13,1.2,.185));
+  deco(box(.1,.12,.05, vestM, .13,1.2,.185));
+  deco(box(.12,.1,.05, vestM, 0,1.42,.185));
+  // ── шея и голова ──
+  deco(cyl(.06,.1, skin, 0,1.63,0,0));
+  const head=new THREE.Mesh(new THREE.SphereGeometry(.165,14,12), skin);
+  head.position.set(0,1.78,0); head.userData={enemyIdx:idx,part:'head'};
+  head.castShadow=true; g.add(head); enemyHitMeshes.push(head);
+  // лицо: глаза, брови, нос, рот
+  const eye=()=>new THREE.Mesh(new THREE.SphereGeometry(.022,6,6), M(0x18120c));
+  const eL=eye(); eL.position.set(-.06,1.81,.145); g.add(eL);
+  const eR=eye(); eR.position.set(.06,1.81,.145); g.add(eR);
+  deco(box(.05,.015,.02, M(0x1d1712), -.06,1.845,.15));
+  deco(box(.05,.015,.02, M(0x1d1712), .06,1.845,.15));
+  deco(box(.035,.06,.035, skin, 0,1.775,.16));                  // нос
+  deco(box(.07,.012,.02, M(0x8a5a4a), 0,1.71,.15));             // рот
+  // каска или волосы (50/50)
+  if(Math.random()<.55){
+    const helmet=new THREE.Mesh(new THREE.SphereGeometry(.19,12,10,0,Math.PI*2,0,Math.PI*.55), helmM);
+    helmet.position.set(0,1.8,0); helmet.castShadow=true; g.add(helmet);
+    deco(box(.02,.06,.24, helmM, -.19,1.74,0));                 // ремешок
+    deco(box(.02,.06,.24, helmM, .19,1.74,0));
+  } else {
+    const hair=new THREE.Mesh(new THREE.SphereGeometry(.175,12,10,0,Math.PI*2,0,Math.PI*.5), M(pick(HAIRS)));
+    hair.position.set(0,1.79,-.01); hair.scale.set(1,.85,1.05); hair.castShadow=true; g.add(hair);
+  }
+  // ── руки в боевой стойке (автомат у плеча) ──
+  const armGeo=()=>{ const ge=new THREE.CylinderGeometry(.07,.06,.58,10); ge.translate(0,-.29,0); return ge; };
   const armL=new THREE.Mesh(armGeo(),shirt), armR=new THREE.Mesh(armGeo(),shirt);
-  armL.position.set(-.34,1.44,0); armR.position.set(.34,1.44,0);
+  armR.position.set(.3,1.52,.02); armR.rotation.set(-1.15,0,-.15);   // правая — к рукояти
+  armL.position.set(-.3,1.52,.02); armL.rotation.set(-1.05,0,.55);   // левая — к цевью
   armL.userData={enemyIdx:idx,part:'body'}; armR.userData={enemyIdx:idx,part:'body'};
   armL.castShadow=armR.castShadow=true;
+  const mkHand=()=>{ const h=new THREE.Mesh(new THREE.SphereGeometry(.065,8,8), skin); h.position.set(0,-.6,0); h.castShadow=true; return h; };
+  armL.add(mkHand()); armR.add(mkHand());
   g.add(armL,armR); enemyHitMeshes.push(armL,armR);
-  // кисти
-  const handL=box(.12,.12,.12, skin, 0,-.68,0), handR=box(.12,.12,.12, skin, 0,-.68,0);
-  armL.add(handL); armR.add(handR);
-  // голова: лицо, волосы, глаза, нос
-  const head=reg(box(.3,.32,.28, skin, 0,1.78,0),'head');
-  const hairM=box(.32,.12,.3, hair, 0,1.95,-.01); hairM.castShadow=true; g.add(hairM);
-  const back=box(.32,.24,.06, hair, 0,1.82,-.15); g.add(back); // затылок
-  const eL=box(.05,.035,.02, M(0x14100c), -.07,1.82,.145), eR=box(.05,.035,.02, M(0x14100c), .07,1.82,.145);
-  const nose=box(.05,.07,.04, skin, 0,1.76,.155);
-  const brows=box(.2,.02,.02, hair.color? hair : M(0x1d1712), 0,1.86,.145);
-  g.add(eL,eR,nose,brows);
-  // автомат в руках
-  const gun=box(.06,.09,.7, M(0x232326), .2,1.3,.28);
-  gun.rotation.y=-.15; g.add(gun);
-  const wgrip=box(.06,.08,.14, M(0x6b4423), .19,1.27,.42); g.add(wgrip);
-  // спаун в дальней половине карты
+  // ── автомат в руках, стволом на игрока (+z) ──
+  deco(box(.05,.09,.72, gunM, .06,1.42,.34));                   // ствольная коробка
+  deco(box(.055,.075,.2, M(0x6b4423), .06,1.42,.62));           // деревянное цевьё
+  deco(cyl(.013,.2, gunM, .06,1.45,.82));                       // ствол
+  const emag=box(.045,.16,.08, M(0x3a2f1c), .06,1.31,.45); emag.rotation.x=-.45; deco(emag); // рожок
+  deco(box(.05,.09,.16, M(0x6b4423), .06,1.4,.02));             // приклад в плечо
+  // ── спаун в дальней половине карты ──
   let x,z;
   do{ x=(Math.random()-.5)*(MAP-8); z=-H2+4+Math.random()*(H2-6); }
   while(Math.hypot(x-playerPos.x,z-playerPos.z)<16 || insideSolid(x,z,.6));
@@ -656,7 +704,8 @@ function spawnEnemy(round){
   const hp=100+round*12;
   enemies.push({g, legL, legR, armL, armR, hp, maxhp:hp, walkT:Math.random()*6,
     speed:2.1+round*.16+Math.random()*.7,
-    nextShot:performance.now()+1300+Math.random()*1600, strafe:Math.random()*6.28, flash:0, mats:[skin,shirt,pants]});
+    nextShot:performance.now()+1300+Math.random()*1600, strafe:Math.random()*6.28, flash:0,
+    mats:[skin,shirt,pants,vestM]});
 }
 function clearEnemies(){
   for(const e of enemies) scene.remove(e.g);
@@ -822,11 +871,11 @@ function updateEnemies(dt,t){
     }
     collide(p,.45);
     e.g.rotation.y=Math.atan2(toP.x,toP.z);
-    // ходьба: махи ногами/руками
+    // ходьба: ноги шагают, руки держат автомат в стойке (не машут)
     if(moving){ e.walkT+=dt*e.speed*2.6; }
-    const sw=Math.sin(e.walkT)*.55;
+    const sw=Math.sin(e.walkT)*.5;
     e.legL.rotation.x=sw; e.legR.rotation.x=-sw;
-    e.armL.rotation.x=-sw*.7; e.armR.rotation.x=sw*.7;
+    e.g.position.y=Math.abs(Math.sin(e.walkT))*.03; // лёгкое покачивание корпуса
     // стрельба
     if(t>e.nextShot){
       e.nextShot=t+900+Math.random()*900;
@@ -863,19 +912,25 @@ function startRound(n){
   lockPointer();
 }
 function hideOverlays(){ ['ov-start','ov-win','ov-dead'].forEach(id=>$(id).classList.add('hidden')); $('shop').classList.add('hidden'); }
-function showMsg(txt){ const m=$('roundmsg'); m.textContent=txt; m.style.opacity=1; setTimeout(()=>m.style.opacity=0,1600); }
+function showMsg(txt,dur=1600){ const m=$('roundmsg'); m.textContent=txt; m.style.opacity=1; setTimeout(()=>m.style.opacity=0,dur); }
 async function onWin(){
-  state='win'; unlockPointer();
+  state='win';
   const reward=roundReward(round);
   profile.tokens+=reward;
   if(round>profile.bestRound)profile.bestRound=round;
   updateTokensHUD();
-  await saveProfile();
-  $('win-reward').textContent=`+${fmt(reward)} $PEW`;
-  const dest = profile.wallet ? `на кошелёк ${short(profile.wallet)} (🔒 до листинга)` : 'на гостевой баланс';
-  $('win-text').textContent=`Раунд ${round} за тобой. Начислено ${dest}. Итого: ${fmt(profile.tokens)} $PEW. Может, пора взять калаш?`;
-  $('ov-win').classList.remove('hidden');
   sfxBuy();
+  // без меню: крупная надпись и авто-старт следующего раунда
+  showMsg(`🏆 ВЫ ВЫИГРАЛИ! +${fmt(reward)} $PEW`, 2800);
+  saveProfile(); // пишем в лидерборд в фоне, не блокируя игру
+  const tryNext=()=>{
+    if(state!=='win') return;                       // игрок успел умереть/выйти
+    if(!$('shop').classList.contains('hidden')){    // сидит в магазине — ждём
+      setTimeout(tryNext,500); return;
+    }
+    startRound(round+1);
+  };
+  setTimeout(tryNext,3000);
 }
 async function onDeath(){
   state='dead'; unlockPointer();
