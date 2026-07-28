@@ -69,6 +69,9 @@
   .killfeed div{background:rgba(11,6,20,.7);border:1px solid rgba(255,61,142,.4);border-radius:6px;padding:3px 10px;font-size:11px;animation:kf 3s forwards}
   .killfeed b{color:var(--gold)}
   @keyframes kf{0%{opacity:0;transform:translateX(20px)}8%{opacity:1;transform:none}80%{opacity:1}100%{opacity:0}}
+  .bomb-hud{position:absolute;bottom:86px;left:0;right:0;text-align:center;pointer-events:none;
+    font-family:'Press Start 2P',monospace;font-size:12px;color:var(--gold);
+    text-shadow:0 0 12px rgba(0,0,0,.9)}
   .roundmsg{position:absolute;top:22%;left:0;right:0;text-align:center;pointer-events:none;
     font-family:'Press Start 2P',monospace;font-size:clamp(13px,2.5vw,20px);color:var(--gold);
     text-shadow:0 0 20px rgba(255,210,63,.8);opacity:0;transition:opacity .3s}
@@ -173,6 +176,7 @@
     <div class="dmg-vignette" id="vig"></div>
     <div class="killfeed" id="killfeed"></div>
     <div class="roundmsg" id="roundmsg"></div>
+    <div class="bomb-hud" id="hud-bomb"></div>
 
     <!-- вход -->
     <div class="overlay" id="ov-start">
@@ -195,7 +199,7 @@
         <button class="ghost" id="btn-join">ВОЙТИ ПО КОДУ</button>
       </div>
       <div class="err" id="room-err"></div>
-      <div class="hint">WASD — движение • мышь — прицел • ЛКМ — огонь • R — перезарядка • Q — граната<br>B — магазин • P — профиль • колёсико или 1–5 — смена ствола • ПКМ — зум (AWP) • Shift — спринт</div>
+      <div class="hint">WASD — движение • мышь — прицел • ЛКМ — огонь • R — перезарядка • Q — граната • E — бомба на точке A/B<br>B — магазин • P — профиль • колёсико или 1–5 — смена ствола • ПКМ — зум (AWP) • Shift — спринт</div>
     </div>
 
     <!-- победа -->
@@ -432,17 +436,80 @@ const $ = id => document.getElementById(id);
 
 /* ═══════════ ЗВУК ═══════════ */
 let AC=null; function ac(){ if(!AC) AC=new (window.AudioContext||window.webkitAudioContext)(); return AC; }
-function sfxShot(pitch=1){
+/* выстрел из трёх слоёв: щелчок-транзиент, тело (шум), низкий удар + хвост эха */
+const SHOT_PROFILES={
+  usp:   {body:2600,bodyDur:.07,thump:.25,thumpF:150,tail:.10,vol:.5},
+  mp7:   {body:3000,bodyDur:.05,thump:.2, thumpF:170,tail:.08,vol:.42},
+  deagle:{body:1900,bodyDur:.1, thump:.55,thumpF:110,tail:.2, vol:.62},
+  ak:    {body:1500,bodyDur:.11,thump:.6, thumpF:95, tail:.22,vol:.6},
+  awp:   {body:900, bodyDur:.16,thump:.9, thumpF:70, tail:.4, vol:.75},
+  bot:   {body:1400,bodyDur:.08,thump:.3, thumpF:110,tail:.12,vol:.3},
+};
+function sfxShot(kind){
   try{
-    const a=ac(),t=a.currentTime;
-    const buf=a.createBuffer(1,a.sampleRate*.08,a.sampleRate), d=buf.getChannelData(0);
-    for(let i=0;i<d.length;i++) d[i]=(Math.random()*2-1)*Math.pow(1-i/d.length,2.5);
-    const s=a.createBufferSource(); s.buffer=buf;
-    const g=a.createGain(); g.gain.setValueAtTime(.5,t); g.gain.exponentialRampToValueAtTime(.001,t+.09);
-    const f=a.createBiquadFilter(); f.type='lowpass'; f.frequency.value=2200*pitch;
-    s.connect(f); f.connect(g); g.connect(a.destination); s.start(t);
+    const pr=SHOT_PROFILES[kind]||SHOT_PROFILES.ak;
+    const a=ac(), t=a.currentTime;
+    // щелчок затвора
+    const click=a.createOscillator(), cg=a.createGain();
+    click.type='square'; click.frequency.setValueAtTime(2400,t); click.frequency.exponentialRampToValueAtTime(300,t+.015);
+    cg.gain.setValueAtTime(pr.vol*.5,t); cg.gain.exponentialRampToValueAtTime(.001,t+.02);
+    click.connect(cg); cg.connect(a.destination); click.start(t); click.stop(t+.03);
+    // тело выстрела — шум через bandpass
+    const bl=Math.floor(a.sampleRate*(pr.bodyDur+pr.tail));
+    const buf=a.createBuffer(1,bl,a.sampleRate), d=buf.getChannelData(0);
+    for(let i=0;i<bl;i++){
+      const k=i/bl;
+      d[i]=(Math.random()*2-1)*Math.pow(1-k,2.2);
+    }
+    const src=a.createBufferSource(); src.buffer=buf;
+    const bp=a.createBiquadFilter(); bp.type='bandpass'; bp.frequency.value=pr.body; bp.Q.value=.7;
+    const lp=a.createBiquadFilter(); lp.type='lowpass';
+    lp.frequency.setValueAtTime(6500,t); lp.frequency.exponentialRampToValueAtTime(900,t+pr.bodyDur+pr.tail);
+    const g=a.createGain(); g.gain.setValueAtTime(pr.vol,t); g.gain.exponentialRampToValueAtTime(.001,t+pr.bodyDur+pr.tail);
+    src.connect(bp); bp.connect(lp); lp.connect(g); g.connect(a.destination); src.start(t);
+    // низкий удар в грудь
+    const th=a.createOscillator(), tg=a.createGain();
+    th.type='sine'; th.frequency.setValueAtTime(pr.thumpF,t); th.frequency.exponentialRampToValueAtTime(45,t+.15);
+    tg.gain.setValueAtTime(pr.thump,t); tg.gain.exponentialRampToValueAtTime(.001,t+.16);
+    th.connect(tg); tg.connect(a.destination); th.start(t); th.stop(t+.18);
   }catch(e){}
 }
+/* ── рация: писк эфира + синтез голоса (встроен в браузер, файлы не нужны) ── */
+function sfxSquelch(){
+  try{
+    const a=ac(),t=a.currentTime;
+    const o=a.createOscillator(),g=a.createGain();
+    o.type='square'; o.frequency.value=1350;
+    g.gain.setValueAtTime(.12,t); g.gain.exponentialRampToValueAtTime(.001,t+.09);
+    o.connect(g); g.connect(a.destination); o.start(t); o.stop(t+.1);
+  }catch(e){}
+}
+let radioBusyUntil=0;
+function radioSay(txt){
+  try{
+    const now=Date.now();
+    if(now<radioBusyUntil) return;           // не перебиваем эфир
+    radioBusyUntil=now+2500;
+    sfxSquelch();
+    if('speechSynthesis' in window){
+      const u=new SpeechSynthesisUtterance(txt);
+      u.lang='ru-RU'; u.rate=1.18; u.pitch=1.02; u.volume=.9;
+      u.onend=()=>{ sfxSquelch(); };
+      speechSynthesis.speak(u);
+    }
+  }catch(e){}
+}
+const RADIO={
+  start:['Погнали, зачищаем сектор!','Вперёд, прикрывайте друг друга!','Работаем, парни!','Пошли-пошли-пошли!'],
+  kill:['Минус один!','Красиво снял!','Так держать!','Цель поражена!'],
+  plant:['Бомба установлена! Держим позиции!'],
+  ten:['Десять секунд! Все в укрытие!'],
+  boom:['Отличная работа! Точка уничтожена!'],
+  defused:['Чёрт, они сняли бомбу!'],
+  hurt:['Ты ранен! Отходи, я прикрою!'],
+  win:['Сектор чист! Отличная работа, бойцы!'],
+};
+const radio=k=>radioSay(RADIO[k][Math.floor(Math.random()*RADIO[k].length)]);
 function sfxTick(fr=880,du=.06,v=.25){
   try{
     const a=ac(),t=a.currentTime,o=a.createOscillator(),g=a.createGain();
@@ -467,7 +534,7 @@ function tex(draw, rx=1, ry=1){
 const noise=(g,s,base,amp,n=2600)=>{ for(let i=0;i<n;i++){ const v=(Math.random()-.5)*amp; g.fillStyle=`rgba(${base[0]+v},${base[1]+v},${base[2]+v},.5)`; g.fillRect(Math.random()*s,Math.random()*s,2,2);} };
 // песок
 const sandTex = tex((g,s)=>{ g.fillStyle='#c9a86a'; g.fillRect(0,0,s,s); noise(g,s,[201,168,106],46,4000);
-  g.strokeStyle='rgba(120,95,55,.25)'; for(let i=0;i<10;i++){ g.beginPath(); g.moveTo(Math.random()*s,Math.random()*s); g.lineTo(Math.random()*s,Math.random()*s); g.stroke(); } }, 14,14);
+  g.strokeStyle='rgba(120,95,55,.25)'; for(let i=0;i<10;i++){ g.beginPath(); g.moveTo(Math.random()*s,Math.random()*s); g.lineTo(Math.random()*s,Math.random()*s); g.stroke(); } }, 26,26);
 // бетон
 const concTex = tex((g,s)=>{ g.fillStyle='#9a917f'; g.fillRect(0,0,s,s); noise(g,s,[154,145,127],36,3200);
   g.strokeStyle='rgba(70,64,55,.35)'; g.lineWidth=1;
@@ -498,9 +565,9 @@ renderer.shadowMap.enabled = true;
 renderer.shadowMap.type = THREE.PCFSoftShadowMap;
 const scene=new THREE.Scene();
 scene.background=new THREE.Color(0xc7ad82);            // пыльное закатное небо
-scene.fog=new THREE.Fog(0xc7ad82, 26, 70);
+scene.fog=new THREE.Fog(0xc7ad82, 45, 130);
 const BASE_FOV=75;
-const camera=new THREE.PerspectiveCamera(BASE_FOV,16/9,.1,140);
+const camera=new THREE.PerspectiveCamera(BASE_FOV,16/9,.1,240);
 
 function resize(){
   const w=stage.clientWidth,h=Math.round(w*9/16);
@@ -513,15 +580,15 @@ addEventListener('resize',resize);
 // солнце и небо
 scene.add(new THREE.HemisphereLight(0xfff2d0, 0x8a7350, .75));
 const sun=new THREE.DirectionalLight(0xffe0b0, 1.1);
-sun.position.set(-25,32,14);
+sun.position.set(-45,60,24);
 sun.castShadow=true;
 sun.shadow.mapSize.set(2048,2048);
-sun.shadow.camera.left=-32; sun.shadow.camera.right=32;
-sun.shadow.camera.top=32; sun.shadow.camera.bottom=-32;
-sun.shadow.camera.far=90;
+sun.shadow.camera.left=-52; sun.shadow.camera.right=52;
+sun.shadow.camera.top=52; sun.shadow.camera.bottom=-52;
+sun.shadow.camera.far=160;
 scene.add(sun);
 
-const MAP=48, H2=MAP/2;
+const MAP=84, H2=MAP/2;
 const floor=new THREE.Mesh(new THREE.PlaneGeometry(MAP,MAP), new THREE.MeshLambertMaterial({map:sandTex}));
 floor.rotation.x=-Math.PI/2; floor.receiveShadow=true; scene.add(floor);
 
@@ -539,35 +606,62 @@ const M_CONC = new THREE.MeshLambertMaterial({map:concTex});
 const M_BRICK = new THREE.MeshLambertMaterial({map:brickTex});
 const M_WOOD = new THREE.MeshLambertMaterial({map:woodTex});
 
-// периметр (высокие бетонные стены)
-addBlock(0,-H2, MAP,6,1, M_BRICK);
-addBlock(0, H2, MAP,6,1, M_BRICK);
-addBlock(-H2,0, 1,6,MAP, M_BRICK);
-addBlock( H2,0, 1,6,MAP, M_BRICK);
-// «двери в мид»: стена с проходом по центру
-addBlock(-14.5,-3, 17,3.6,1.2, M_CONC);
-addBlock( 14.5,-3, 17,3.6,1.2, M_CONC);
-// «лонг» — длинный коридор справа
-addBlock(9,-14, 1.2,3.4,16, M_CONC);
-// «шорт» слева
-addBlock(-10,8, 1.2,3.2,12, M_CONC);
-// площадка Б: низкие стены
-addBlock(-16,-15, 8,1.4,1, M_CONC);
-addBlock(-20,-11, 1,1.4,8, M_CONC);
-// ящики (дерево) — одиночные и стопки
+// периметр (высокие стены)
+addBlock(0,-H2, MAP,7,1, M_BRICK);
+addBlock(0, H2, MAP,7,1, M_BRICK);
+addBlock(-H2,0, 1,7,MAP, M_BRICK);
+addBlock( H2,0, 1,7,MAP, M_BRICK);
+// ── МИД: длинная стена с «двойными дверями» по центру ──
+addBlock(-23,-2, 36,4,1.4, M_CONC);
+addBlock( 23,-2, 36,4,1.4, M_CONC);
+// ── ЛОНГ (правый коридор к точке А) ──
+addBlock(18,-24, 1.4,4,32, M_CONC);
+addBlock(31,-20, 1.4,4,28, M_CONC);
+addBlock(24,-38, 12,4,1.4, M_CONC);   // выход с лонга
+// ── БАНАН (левый изгиб к точке Б) ──
+addBlock(-18,4, 1.4,3.6,22, M_CONC);
+addBlock(-30,-14, 1.4,4,30, M_CONC);
+addBlock(-24,-32, 10,3.6,1.4, M_CONC);
+// ── центр: коннектор и укрытия ──
+addBlock(0,-16, 14,3,1.4, M_CONC);
+addBlock(8,12, 1.4,3,16, M_CONC);
+addBlock(-6,22, 18,2.6,1.4, M_CONC);
+// ── ТОЧКА A (северо-восток) и ТОЧКА B (северо-запад) ──
+function siteDecal(letter,x,z){
+  const c=document.createElement('canvas'); c.width=c.height=256;
+  const g2=c.getContext('2d');
+  g2.strokeStyle='rgba(255,180,40,.85)'; g2.lineWidth=14; g2.strokeRect(14,14,228,228);
+  g2.font='bold 170px monospace'; g2.textAlign='center'; g2.textBaseline='middle';
+  g2.fillStyle='rgba(255,180,40,.8)'; g2.fillText(letter,128,140);
+  const t=new THREE.CanvasTexture(c);
+  const p=new THREE.Mesh(new THREE.PlaneGeometry(9,9), new THREE.MeshBasicMaterial({map:t,transparent:true,depthWrite:false}));
+  p.rotation.x=-Math.PI/2; p.position.set(x,.03,z);
+  scene.add(p);
+}
+siteDecal('A',28,-30); siteDecal('B',-28,-28);
+// низкие стенки вокруг плэнтов
+addBlock(34,-26, 1,1.6,10, M_CONC);
+addBlock(28,-23, 10,1.6,1, M_CONC);
+addBlock(-34,-24, 1,1.6,9, M_CONC);
+addBlock(-24,-22, 8,1.6,1, M_CONC);
+// ── ящики и укрытия по всей карте ──
 function crate(x,z,s=2,h=null){ addBlock(x,z,s,h||s,s,M_WOOD); }
-crate(3,4); crate(3,4.1,2,4); // стопка
-crate(-4,-8,2.4); crate(13,7,2); crate(13,9.2,2); crate(-14,2,2.2);
-crate(17,-8,2.4); crate(-7,14,2); crate(5,15,2.6); crate(-18,16,2.2);
-crate(0,-16,2.4); crate(-2.4,-16,2.4); crate(-1.2,-16,2.4,4.8);
-// бочки (металл)
+crate(3,6); crate(3,6.1,2,4);
+crate(-6,-10,2.4); crate(14,10,2); crate(14,12.2,2); crate(-16,4,2.2);
+crate(22,-12,2.4); crate(-9,18,2); crate(6,26,2.6); crate(-24,26,2.2);
+crate(0,-24,2.4); crate(-2.4,-24,2.4); crate(-1.2,-24,2.4,4.8);
+crate(28,-32,2.2); crate(30,-28,2); crate(-28,-32,2.2); crate(-30,-25,2);
+crate(36,14,2.6); crate(-36,10,2.4); crate(12,-34,2.2); crate(-12,-36,2.4);
+crate(38,-8,2); crate(-38,-4,2.2); crate(20,30,2.4); crate(-20,34,2);
+// бочки
 function barrel(x,z){
   const m=new THREE.Mesh(new THREE.CylinderGeometry(.55,.55,1.5,12), new THREE.MeshLambertMaterial({map:metalTex}));
   m.position.set(x,.75,z); m.castShadow=true; m.receiveShadow=true;
   scene.add(m); wallMeshes.push(m);
   solids.push({minx:x-.55,maxx:x+.55,minz:z-.55,maxz:z+.55,h:1.5});
 }
-barrel(7.5,1); barrel(8.6,1.4); barrel(-11,-6); barrel(15,13); barrel(-16,-18);
+barrel(9,2); barrel(10.1,2.4); barrel(-13,-8); barrel(19,17); barrel(-20,-20);
+barrel(33,-34); barrel(-33,-30); barrel(25,-6); barrel(-8,30); barrel(40,28);
 
 /* ═══════════ ОРУЖИЕ: ДЕТАЛЬНЫЕ МОДЕЛИ ═══════════ */
 const gunGroup=new THREE.Group();
@@ -696,19 +790,22 @@ function spawnEnemy(round, netId, px, pz){
   // ── руки в боевой стойке (автомат у плеча) ──
   const armGeo=()=>{ const ge=new THREE.CylinderGeometry(.07,.06,.58,10); ge.translate(0,-.29,0); return ge; };
   const armL=new THREE.Mesh(armGeo(),shirt), armR=new THREE.Mesh(armGeo(),shirt);
-  armR.position.set(.3,1.52,.02); armR.rotation.set(-1.15,0,-.15);   // правая — к рукояти
-  armL.position.set(-.3,1.52,.02); armL.rotation.set(-1.05,0,.55);   // левая — к цевью
+  armR.position.set(.28,1.5,.04); armR.rotation.set(-.55,.2,-.15);   // правая согнута к рукояти у груди
+  armL.position.set(-.28,1.5,.04); armL.rotation.set(-.8,-.45,.5);   // левая — вперёд к цевью
   armL.userData={enemyIdx:idx,part:'body'}; armR.userData={enemyIdx:idx,part:'body'};
   armL.castShadow=armR.castShadow=true;
   const mkHand=()=>{ const h=new THREE.Mesh(new THREE.SphereGeometry(.065,8,8), skin); h.position.set(0,-.6,0); h.castShadow=true; return h; };
   armL.add(mkHand()); armR.add(mkHand());
   g.add(armL,armR); enemyHitMeshes.push(armL,armR);
   // ── автомат в руках, стволом на игрока (+z) ──
-  deco(box(.05,.09,.72, gunM, .06,1.42,.34));                   // ствольная коробка
-  deco(box(.055,.075,.2, M(0x6b4423), .06,1.42,.62));           // деревянное цевьё
-  deco(cyl(.013,.2, gunM, .06,1.45,.82));                       // ствол
-  const emag=box(.045,.16,.08, M(0x3a2f1c), .06,1.31,.45); emag.rotation.x=-.45; deco(emag); // рожок
-  deco(box(.05,.09,.16, M(0x6b4423), .06,1.4,.02));             // приклад в плечо
+  const rifle=new THREE.Group();
+  rifle.add(box(.05,.09,.72, gunM, 0,0,.3));
+  rifle.add(box(.055,.075,.2, M(0x6b4423), 0,0,.56));
+  rifle.add(cyl(.013,.2, gunM, 0,.02,.76));
+  const emag=box(.045,.16,.08, M(0x3a2f1c), 0,-.1,.4); emag.rotation.x=-.45; rifle.add(emag);
+  rifle.add(box(.05,.09,.16, M(0x6b4423), 0,0,-.02));
+  rifle.position.set(.05,1.28,.1); rifle.rotation.x=.12; // у груди, ствол чуть вниз
+  rifle.traverse(o=>o.castShadow=true); g.add(rifle);
   // ── спаун ──
   let x,z;
   if(px!==undefined){ x=px; z=pz; }
@@ -719,7 +816,7 @@ function spawnEnemy(round, netId, px, pz){
   const hp=100+round*12;
   enemies.push({g, legL, legR, armL, armR, hp, maxhp:hp, walkT:Math.random()*6,
     netId:netId||('s'+(spawnSeq++)),
-    speed:2.1+round*.16+Math.random()*.7,
+    speed:2.7+round*.18+Math.random()*.8,
     nextShot:performance.now()+1300+Math.random()*1600, strafe:Math.random()*6.28, flash:0,
     mats:[skin,shirt,pants,vestM]});
 }
@@ -780,6 +877,132 @@ function explode(pos){
   }
 }
 
+/* ═══════════ БОМБА (как в CS: плэнт на точках A/B) ═══════════ */
+const SITES=[{n:'A',x:28,z:-30,r:5.5},{n:'B',x:-28,z:-28,r:5.5}];
+const BOMB_TIME=40000, PLANT_TIME=3.5, DEFUSE_TIME=6, BOMB_REWARD=200;
+let bomb={state:'carried', x:0, z:0, end:0, plantT:0, defuse:0, nextBeep:0};
+let bombMesh=null, bombLight=null, lowHpSaid=false;
+function bombHUD(txt,danger){
+  const el=$('hud-bomb');
+  if(!el) return;
+  el.textContent=txt||'';
+  el.style.color=danger?'var(--danger)':'var(--gold)';
+}
+function inSite(){
+  for(const st of SITES)
+    if(Math.hypot(playerPos.x-st.x,playerPos.z-st.z)<st.r) return st;
+  return null;
+}
+function makeBombMesh(x,z){
+  clearBombMesh();
+  bombMesh=new THREE.Group();
+  const c4=new THREE.Mesh(new THREE.BoxGeometry(.36,.14,.26), new THREE.MeshLambertMaterial({color:0x2a2d24}));
+  c4.position.y=.07; c4.castShadow=true; bombMesh.add(c4);
+  const plate=new THREE.Mesh(new THREE.BoxGeometry(.3,.02,.2), new THREE.MeshLambertMaterial({color:0x707a5e}));
+  plate.position.y=.15; bombMesh.add(plate);
+  bombLight=new THREE.Mesh(new THREE.SphereGeometry(.035,8,8), new THREE.MeshBasicMaterial({color:0xff2222}));
+  bombLight.position.set(.1,.16,.08); bombMesh.add(bombLight);
+  bombMesh.position.set(x,0,z);
+  scene.add(bombMesh);
+}
+function clearBombMesh(){ if(bombMesh){ scene.remove(bombMesh); bombMesh=null; bombLight=null; } }
+function resetBomb(){
+  bomb={state:'carried',x:0,z:0,end:0,plantT:0,defuse:0,nextBeep:0};
+  clearBombMesh(); bombHUD('');
+  lowHpSaid=false;
+}
+function adoptPlant(x,z,end){
+  if(bomb.state==='planted') return;
+  bomb.state='planted'; bomb.x=x; bomb.z=z; bomb.end=end; bomb.defuse=0; bomb.nextBeep=0;
+  makeBombMesh(x,z);
+  radio('plant');
+  showMsg('💣 БОМБА УСТАНОВЛЕНА',2200);
+}
+function plantComplete(){
+  const end=Date.now()+BOMB_TIME;
+  adoptPlant(playerPos.x,playerPos.z,end);
+  if(net.active){
+    rPOST('/feed',{type:'plant',x:+playerPos.x.toFixed(1),z:+playerPos.z.toFixed(1),end,t:Date.now()});
+    if(net.isHost) rPATCH('',{bomb:{x:bomb.x,z:bomb.z,end}});
+  }
+}
+function bombDefusedLocal(){
+  if(bomb.state!=='planted') return;
+  bomb.state='none'; clearBombMesh(); bombHUD('');
+  radio('defused');
+  showMsg('БОТЫ СНЯЛИ БОМБУ!',2200);
+}
+function boomVisual(pos){
+  for(let i=0;i<3;i++){
+    const s=new THREE.Mesh(new THREE.SphereGeometry(2+i*2,14,14),
+      new THREE.MeshBasicMaterial({color:[0xfff2b0,0xffb347,0xff6a3d][i],transparent:true,opacity:.9-i*.2}));
+    s.position.copy(pos); scene.add(s);
+    explosions.push({m:s,life:.6+i*.15});
+  }
+  recoil=Math.min(recoil+.12,.2);
+  try{ // длинный тяжёлый взрыв
+    const a=ac(),t=a.currentTime;
+    const buf=a.createBuffer(1,a.sampleRate*1.4,a.sampleRate),d=buf.getChannelData(0);
+    for(let i=0;i<d.length;i++) d[i]=(Math.random()*2-1)*Math.pow(1-i/d.length,1.6);
+    const src=a.createBufferSource(); src.buffer=buf;
+    const f=a.createBiquadFilter(); f.type='lowpass'; f.frequency.setValueAtTime(900,t); f.frequency.exponentialRampToValueAtTime(60,t+1.3);
+    const g=a.createGain(); g.gain.setValueAtTime(1,t); g.gain.exponentialRampToValueAtTime(.001,t+1.4);
+    src.connect(f); f.connect(g); g.connect(a.destination); src.start(t);
+  }catch(e){}
+}
+function bombExplode(){
+  if(bomb.state!=='planted') return;
+  const pos=new THREE.Vector3(bomb.x,1,bomb.z);
+  bomb.state='none'; clearBombMesh(); bombHUD('');
+  boomVisual(pos);
+  radio('boom');
+  // авторитет взрыва: соло и хост (клиенты получат зачистку через синк и фид)
+  if(!net.active||net.isHost){
+    for(const e of [...enemies]) removeEnemy(e);
+    if(net.active){
+      rPOST('/feed',{type:'boom',round:round,t:Date.now()});
+      rPATCH('',{bomb:null});
+      hostRoundWin();
+    } else {
+      profile.tokens+=BOMB_REWARD;
+      const kf=document.createElement('div');
+      kf.innerHTML=`💥 бомба уничтожила точку <b>+${BOMB_REWARD} $PEW</b>`;
+      $('killfeed').prepend(kf); setTimeout(()=>kf.remove(),3100);
+      updateTokensHUD();
+      onWin();
+    }
+  }
+}
+function bombTick(dt){
+  const now=Date.now();
+  if(bomb.state==='carried'&&state==='play'){
+    const st=inSite();
+    if(keys['KeyE']&&st){
+      const still=!(keys['KeyW']||keys['KeyA']||keys['KeyS']||keys['KeyD']); // как в кс — стоять
+      if(still){
+        bomb.plantT+=dt;
+        bombHUD(`УСТАНОВКА БОМБЫ [${st.n}]: ${Math.min(100,Math.round(bomb.plantT/PLANT_TIME*100))}%`);
+        if(bomb.plantT>=PLANT_TIME){ bomb.plantT=0; plantComplete(); }
+      } else { bomb.plantT=0; bombHUD('СТОЙ НА МЕСТЕ ДЛЯ УСТАНОВКИ'); }
+    } else {
+      bomb.plantT=0;
+      bombHUD(st?`ТОЧКА ${st.n} — УДЕРЖИВАЙ E ДЛЯ УСТАНОВКИ БОМБЫ`:'');
+    }
+  }
+  if(bomb.state==='planted'){
+    const left=bomb.end-now;
+    if(left<=0){ bombExplode(); return; }
+    bombHUD(`💣 ВЗРЫВ ЧЕРЕЗ ${(left/1000).toFixed(0)} СЕК • боты бегут снимать!`, left<10500);
+    if(left<10500&&left>9500) radio('ten');
+    if(now>bomb.nextBeep){ // писк ускоряется к взрыву
+      const interval=Math.max(120, left/BOMB_TIME*1000);
+      bomb.nextBeep=now+interval;
+      sfxTick(1660,.05,.22);
+      if(bombLight) bombLight.material.color.setHex(bombLight.material.color.getHex()===0xff2222?0x550000:0xff2222);
+    }
+  }
+}
+
 /* ═══════════ ОНЛАЙН: КОМНАТЫ ЧЕРЕЗ FIREBASE (кооп против ботов) ═══════════
    Хост (создатель комнаты) симулирует ботов и пишет их состояние ~5 раз/сек.
    Клиенты интерполируют ботов, шлют свои попадания хосту, все видят друг друга.
@@ -820,6 +1043,7 @@ function syncEnemies(obj){
 }
 function incomingDamage(d){
   hp-=Math.round(d); sfxHurt();
+  if(hp<30&&hp>0&&!lowHpSaid){ lowHpSaid=true; radio('hurt'); }
   $('vig').style.opacity=1; setTimeout(()=>$('vig').style.opacity=0,250);
   updateHpHUD();
   if(hp<=0) onDeath();
@@ -853,7 +1077,12 @@ function buildSoldier(name,seed){
   const hd=new THREE.Mesh(new THREE.SphereGeometry(.165,12,10),skin); hd.position.set(0,1.78,0); hd.castShadow=true; g.add(hd);
   const hm=new THREE.Mesh(new THREE.SphereGeometry(.19,12,10,0,Math.PI*2,0,Math.PI*.55),M(0x2f4a80));
   hm.position.set(0,1.8,0); hm.castShadow=true; g.add(hm);
-  const gun=box(.05,.09,.7,M(0x1d1d21),.06,1.42,.34); gun.castShadow=true; g.add(gun);
+  const armGeo=()=>{ const ge=new THREE.CylinderGeometry(.07,.06,.58,10); ge.translate(0,-.29,0); return ge; };
+  const aL=new THREE.Mesh(armGeo(),shirt), aR=new THREE.Mesh(armGeo(),shirt);
+  aR.position.set(.28,1.5,.04); aR.rotation.set(-.55,.2,-.15);
+  aL.position.set(-.28,1.5,.04); aL.rotation.set(-.8,-.45,.5);
+  aL.castShadow=aR.castShadow=true; g.add(aL,aR);
+  const gun=box(.05,.09,.7,M(0x1d1d21),.05,1.28,.4); gun.rotation.x=.12; gun.castShadow=true; g.add(gun);
   g.add(nameSprite(name));
   return {g,legL,legR,hp:100,walkT:Math.random()*6,lastShoot:0};
 }
@@ -870,7 +1099,7 @@ function upsertRemote(pid,d){
     r.lastShoot=d.shootT;
     const eye=r.g.position.clone().setY(1.5);
     addTracer(eye, eye.clone().add(new THREE.Vector3(-Math.sin(r.tyaw),0,-Math.cos(r.tyaw)).multiplyScalar(10)), 0xffd23f);
-    if(eye.distanceTo(playerPos)<30) sfxShot(.9);
+    if(eye.distanceTo(playerPos)<40) sfxShot('bot');
   }
   r.g.visible=r.hp>0;
 }
@@ -940,10 +1169,13 @@ async function pollRoom(){
       if(!net.isHost){
         if(typeof snap.round==='number'&&snap.round>0&&snap.round!==net.round){
           net.round=snap.round; round=snap.round;
+          resetBomb();
           localRoundReset(); revive(); hideOverlays();
           showMsg(`РАУНД ${round}`,1800);
         }
         syncEnemies(snap.enemies);
+        if(snap.bomb&&bomb.state!=='planted') adoptPlant(snap.bomb.x,snap.bomb.z,snap.bomb.end);
+        if(!snap.bomb&&bomb.state==='planted'&&Date.now()<bomb.end-1500) bombDefusedLocal();
       }
       // входящий урон от ботов (насчитал хост)
       const din=snap.dmg&&snap.dmg[net.pid];
@@ -984,6 +1216,18 @@ function processFeed(feed){
       kf.innerHTML=`${esc(ev.name||'?')} ${ev.h?'🎯':'☠'} ликвидировал бота${ev.by===net.pid?` <b>+${KILL_REWARD} $PEW</b>`:''}`;
       $('killfeed').prepend(kf); setTimeout(()=>kf.remove(),3100);
       if(ev.by===net.pid){ profile.kills++; profile.tokens+=KILL_REWARD; updateTokensHUD(); sfxKill(); saveProfile(); }
+      else if(Math.random()<.3) radio('kill'); // тиммейт хвалит по рации
+    }
+    if(ev.type==='plant'&&bomb.state!=='planted'&&ev.end>Date.now()){
+      adoptPlant(ev.x,ev.z,ev.end);
+      if(net.isHost) rPATCH('',{bomb:{x:ev.x,z:ev.z,end:ev.end}});
+    }
+    if(ev.type==='defused') bombDefusedLocal();
+    if(ev.type==='boom'&&ev.round>=net.lastWinRound){
+      profile.tokens+=BOMB_REWARD; updateTokensHUD(); saveProfile();
+      const kb=document.createElement('div');
+      kb.innerHTML=`💥 бомба уничтожила точку <b>+${BOMB_REWARD} $PEW</b>`;
+      $('killfeed').prepend(kb); setTimeout(()=>kb.remove(),3100);
     }
     if(ev.type==='win'&&ev.round>net.lastWinRound){
       net.lastWinRound=ev.round;
@@ -1065,7 +1309,7 @@ function tryShoot(t){
   if(mag<=0){ startReload(t); return; }
   lastShot=t; mag--; updateAmmoHUD();
   lastShotNet=Date.now();
-  sfxShot(profile.equipped==='awp'?.6:1);
+  sfxShot(profile.equipped);
   recoil=Math.min(recoil+(w.auto?.012:.03),.09);
   muzzle.material.opacity=1; setTimeout(()=>{if(muzzle)muzzle.material.opacity=0;},45);
   const sp=zoomed? w.spread*.25 : w.spread;
@@ -1162,8 +1406,11 @@ function updateEnemies(dt,t){
         if(d<bestD){ bestD=d; tx=r.g.position.x; tz=r.g.position.z; tpid=pid; }
       }
     }
-    if(bestD===Infinity) continue; // атаковать некого
-    const toP=new THREE.Vector3(tx-p.x,0,tz-p.z);
+    if(bestD===Infinity&&bomb.state!=='planted') continue; // атаковать некого
+    // движение: если бомба заложена — все бегут её снимать
+    let mx=tx, mz=tz;
+    if(bomb.state==='planted'){ mx=bomb.x; mz=bomb.z; }
+    const toP=new THREE.Vector3(mx-p.x,0,mz-p.z);
     const dist=toP.length();
     e.strafe+=dt*2;
     let moving=false;
@@ -1176,20 +1423,27 @@ function updateEnemies(dt,t){
       p.x+=side.x*e.speed*.8*dt; p.z+=side.z*e.speed*.8*dt; moving=true;
     }
     collide(p,.45);
+    if(bomb.state==='planted'&&Math.hypot(p.x-bomb.x,p.z-bomb.z)<2.6){
+      bomb.defuse+=dt;
+      if(bomb.defuse>=DEFUSE_TIME){
+        bombDefusedLocal();
+        if(net.active&&net.isHost){ rPATCH('',{bomb:null}); rPOST('/feed',{type:'defused',t:Date.now()}); }
+      }
+    }
     e.g.rotation.y=Math.atan2(toP.x,toP.z);
-    if(moving) e.walkT+=dt*e.speed*2.6;
-    const sw=Math.sin(e.walkT)*.5;
+    if(moving) e.walkT+=dt*e.speed*3.2;
+    const sw=Math.sin(e.walkT)*.7;
     e.legL.rotation.x=sw; e.legR.rotation.x=-sw;
-    p.y=Math.abs(Math.sin(e.walkT))*.03;
-    // стрельба по выбранной цели
-    if(t>e.nextShot){
+    p.y=Math.abs(Math.sin(e.walkT))*.05;
+    // стрельба по выбранной цели (если она есть)
+    if(bestD!==Infinity&&t>e.nextShot){
       e.nextShot=t+900+Math.random()*900;
       const eye=p.clone().setY(1.78);
       const tgt=new THREE.Vector3(tx,1.6,tz);
       if(dist<28&&!losBlocked(eye,tgt)){
         const acc=Math.max(.25,1-dist/32);
         addTracer(eye,tgt.clone().add(new THREE.Vector3((Math.random()-.5),(Math.random()-.5),(Math.random()-.5))),0xff6a3d);
-        sfxShot(.8);
+        sfxShot('bot');
         if(Math.random()<acc){
           const dmg=Math.round(7+Math.random()*8);
           if(tpid===null){ incomingDamage(dmg); if(hp<=0) return; }
@@ -1227,7 +1481,9 @@ function revive(){
 }
 function startRound(n){ // соло
   round=n; clearEnemies();
+  resetBomb();
   localRoundReset();
+  radio('start');
   for(let i=0;i<3+n;i++) spawnEnemy(n);
   $('hud-left').textContent=enemies.length;
   state='play'; hideOverlays();
@@ -1237,13 +1493,15 @@ function startRound(n){ // соло
 function hostStartRound(n){ // онлайн, хост
   round=n; net.round=n;
   clearEnemies();
+  resetBomb();
   localRoundReset(); revive(); hideOverlays();
+  radio('start');
   const cnt=3+n+Object.keys(remotes).length*2; // больше игроков — больше ботов
   for(let i=0;i<cnt;i++) spawnEnemy(n,'e'+n+'_'+i);
   $('hud-left').textContent=enemies.length;
   state='play';
   showMsg(`РАУНД ${round} — GO GO GO`);
-  rPATCH('',{round:n,phase:'play'});
+  rPATCH('',{round:n,phase:'play',bomb:null});
   pushEnemies();
 }
 function hideOverlays(){ ['ov-start','ov-win','ov-dead'].forEach(id=>$(id).classList.add('hidden')); $('shop').classList.add('hidden'); }
@@ -1257,6 +1515,7 @@ async function onWin(){
   sfxBuy();
   // без меню: крупная надпись и авто-старт следующего раунда
   showMsg(`🏆 ВЫ ВЫИГРАЛИ! +${fmt(reward)} $PEW`, 2800);
+  radio('win');
   saveProfile(); // пишем в лидерборд в фоне, не блокируя игру
   const tryNext=()=>{
     if(state!=='win') return;                       // игрок успел умереть/выйти
@@ -1443,8 +1702,8 @@ function loop(t){
       const dx=((r.tx!==undefined)?r.tx:p.x)-p.x, dz=((r.tz!==undefined)?r.tz:p.z)-p.z;
       const k=Math.min(1,10*dt);
       p.x+=dx*k; p.z+=dz*k;
-      if(Math.hypot(dx,dz)>.03) r.walkT+=dt*7;
-      const sw=Math.sin(r.walkT)*.5;
+      if(Math.hypot(dx,dz)>.03) r.walkT+=dt*9;
+      const sw=Math.sin(r.walkT)*.7;
       r.legL.rotation.x=sw; r.legR.rotation.x=-sw;
       let dy=((r.tyaw!==undefined)?r.tyaw:0)-r.g.rotation.y;
       while(dy>Math.PI)dy-=6.283; while(dy<-Math.PI)dy+=6.283;
@@ -1474,6 +1733,7 @@ function loop(t){
     gr.fuse-=dt;
     if(gr.fuse<=0){ const p=gr.m.position.clone(); scene.remove(gr.m); grenadesArr.splice(i,1); explode(p); }
   }
+  bombTick(dt);
   // вспышки взрывов
   for(let i=explosions.length-1;i>=0;i--){
     const ex=explosions[i]; ex.life-=dt;
