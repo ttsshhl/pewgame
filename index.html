@@ -195,10 +195,10 @@
         <div class="addr" id="wallet-addr"></div>
         <div class="st">✅ Кошелёк привязан. Фарм пойдёт на этот адрес.</div>
       </div>
-      <p style="font-size:11px">…или укажи ник гостя (кошелёк можно подключить позже):</p>
+      <p style="font-size:11px">…или укажи ник гостя (кошелёк можно подключить позже). «Играть онлайн» закинет тебя к случайным игрокам, которые сейчас в игре (или к ботам, если людей нет):</p>
       <input id="name-input" maxlength="16" placeholder="Ник" autocomplete="off">
       <div class="btnrow">
-        <button class="gold" id="btn-start">ИГРАТЬ СОЛО</button>
+        <button class="gold" id="btn-start">ИГРАТЬ ОНЛАЙН</button>
         <button id="btn-create">СОЗДАТЬ КОМНАТУ</button>
       </div>
       <div class="btnrow">
@@ -206,7 +206,7 @@
         <button class="ghost" id="btn-join">ВОЙТИ ПО КОДУ</button>
       </div>
       <div class="err" id="room-err"></div>
-      <div class="hint">WASD — движение • мышь — прицел • ЛКМ — огонь • R — перезарядка • Q — граната • E — бомба на точке A/B<br>B — магазин • P — профиль • колёсико или 1–5 — смена ствола • ПКМ — зум (AWP) • Shift — спринт</div>
+      <div class="hint">WASD — движение • ПРОБЕЛ — прыжок • мышь — прицел • ЛКМ — огонь • R — перезарядка<br>Q — граната • E — бомба на A/B<br>B — магазин • P — профиль • колёсико или 1–5 — смена ствола • ПКМ — зум (AWP) • Shift — спринт</div>
     </div>
 
     <!-- победа -->
@@ -592,40 +592,114 @@ const sfxKill=()=>{sfxTick(660,.08,.25);setTimeout(()=>sfxTick(990,.1,.25),70);}
 const sfxBuy=()=>{sfxTick(523,.07,.2);setTimeout(()=>sfxTick(784,.09,.2),80);setTimeout(()=>sfxTick(1046,.12,.2),160);};
 const sfxHurt=()=>sfxTick(140,.15,.3);
 
-/* ═══════════ ПРОЦЕДУРНЫЕ ТЕКСТУРЫ (без внешних файлов) ═══════════ */
+/* ═══════════ ПРОЦЕДУРНЫЕ ТЕКСТУРЫ 512px (без внешних файлов) ═══════════ */
 function tex(draw, rx=1, ry=1){
-  const c=document.createElement('canvas'); c.width=c.height=256;
-  draw(c.getContext('2d'), 256);
+  const c=document.createElement('canvas'); c.width=c.height=512;
+  draw(c.getContext('2d'), 512);
   const t=new THREE.CanvasTexture(c);
   t.wrapS=t.wrapT=THREE.RepeatWrapping; t.repeat.set(rx,ry);
+  t.anisotropy=4;
   return t;
 }
-const noise=(g,s,base,amp,n=2600)=>{ for(let i=0;i<n;i++){ const v=(Math.random()-.5)*amp; g.fillStyle=`rgba(${base[0]+v},${base[1]+v},${base[2]+v},.5)`; g.fillRect(Math.random()*s,Math.random()*s,2,2);} };
-// песок
-const sandTex = tex((g,s)=>{ g.fillStyle='#c9a86a'; g.fillRect(0,0,s,s); noise(g,s,[201,168,106],46,4000);
-  g.strokeStyle='rgba(120,95,55,.25)'; for(let i=0;i<10;i++){ g.beginPath(); g.moveTo(Math.random()*s,Math.random()*s); g.lineTo(Math.random()*s,Math.random()*s); g.stroke(); } }, 26,26);
-// бетон
-const concTex = tex((g,s)=>{ g.fillStyle='#9a917f'; g.fillRect(0,0,s,s); noise(g,s,[154,145,127],36,3200);
-  g.strokeStyle='rgba(70,64,55,.35)'; g.lineWidth=1;
-  for(let i=0;i<6;i++){ g.beginPath(); let x=Math.random()*s,y=Math.random()*s; g.moveTo(x,y);
-    for(let j=0;j<4;j++){ x+=(Math.random()-.5)*70; y+=(Math.random()-.5)*70; g.lineTo(x,y);} g.stroke(); } }, 3,1.5);
-// кирпич-саман
-const brickTex = tex((g,s)=>{ g.fillStyle='#b08a5a'; g.fillRect(0,0,s,s);
-  g.fillStyle='rgba(90,65,40,.5)';
-  const bh=32,bw=64;
-  for(let y=0;y<s;y+=bh){ const off=(y/bh)%2? bw/2:0;
-    for(let x=-bw;x<s+bw;x+=bw){ g.strokeStyle='rgba(80,58,35,.6)'; g.lineWidth=3; g.strokeRect(x+off,y,bw,bh); } }
-  noise(g,s,[176,138,90],36,2200); }, 3,1.5);
-// доски
-const woodTex = tex((g,s)=>{ g.fillStyle='#8a6238'; g.fillRect(0,0,s,s);
-  for(let y=0;y<s;y+=42){ g.fillStyle=`rgba(${100+Math.random()*40},${66+Math.random()*24},${34},.9)`; g.fillRect(0,y,s,40);
-    g.strokeStyle='rgba(50,32,14,.7)'; g.lineWidth=2; g.strokeRect(0,y,s,40); }
-  g.strokeStyle='rgba(60,40,18,.4)';
-  for(let i=0;i<26;i++){ g.beginPath(); const y=Math.random()*s; g.moveTo(0,y); g.bezierCurveTo(s/3,y+8,s*2/3,y-8,s,y); g.stroke(); }
-  noise(g,s,[130,90,50],30,1400); },1,1);
-// металл (для бочек)
-const metalTex = tex((g,s)=>{ g.fillStyle='#5a6b5e'; g.fillRect(0,0,s,s); noise(g,s,[90,107,94],26,2600);
-  g.fillStyle='rgba(160,60,40,.35)'; for(let i=0;i<12;i++){ g.beginPath(); g.arc(Math.random()*s,Math.random()*s,4+Math.random()*14,0,7); g.fill(); } },1,1);
+function speckle(g,s,base,amp,n){ for(let i=0;i<n;i++){ const v=(Math.random()-.5)*amp; g.fillStyle=`rgba(${base[0]+v|0},${base[1]+v|0},${base[2]+v|0},.5)`; g.fillRect(Math.random()*s,Math.random()*s,2,2); } }
+function stains(g,s,color,n,rmin,rmax,a){ // разводы и пятна
+  for(let i=0;i<n;i++){
+    const x=Math.random()*s,y=Math.random()*s,r=rmin+Math.random()*(rmax-rmin);
+    const gr=g.createRadialGradient(x,y,0,x,y,r);
+    gr.addColorStop(0,`rgba(${color},${a})`); gr.addColorStop(1,`rgba(${color},0)`);
+    g.fillStyle=gr; g.beginPath(); g.arc(x,y,r,0,7); g.fill();
+  }
+}
+function grime(g,s){ // грязь у нижнего края
+  const gr=g.createLinearGradient(0,s*.7,0,s);
+  gr.addColorStop(0,'rgba(40,32,22,0)'); gr.addColorStop(1,'rgba(40,32,22,.4)');
+  g.fillStyle=gr; g.fillRect(0,s*.7,s,s*.3);
+}
+// песок: галька, следы, неровности
+const sandTex = tex((g,s)=>{
+  g.fillStyle='#c4a267'; g.fillRect(0,0,s,s);
+  speckle(g,s,[196,162,103],56,14000);
+  stains(g,s,'150,118,70',14,30,110,.16);
+  stains(g,s,'225,195,140',10,20,80,.12);
+  for(let i=0;i<130;i++){ // галька с тенью
+    const x=Math.random()*s,y=Math.random()*s,r=1.5+Math.random()*3.5;
+    g.fillStyle='rgba(90,72,45,.55)'; g.beginPath(); g.ellipse(x+1,y+1,r,r*.7,0,0,7); g.fill();
+    g.fillStyle=`rgba(${170+Math.random()*50|0},${140+Math.random()*40|0},${95+Math.random()*30|0},.9)`;
+    g.beginPath(); g.ellipse(x,y,r,r*.7,Math.random()*3,0,7); g.fill();
+  }
+  g.strokeStyle='rgba(120,95,55,.2)'; g.lineWidth=5; // следы колёс
+  for(let i=0;i<3;i++){ g.beginPath(); const y0=Math.random()*s; g.moveTo(0,y0); g.bezierCurveTo(s/3,y0+40,s*2/3,y0-40,s,y0+10); g.stroke(); }
+}, 26,26);
+// бетон: пятна, трещины, потёки
+const concTex = tex((g,s)=>{
+  g.fillStyle='#98907e'; g.fillRect(0,0,s,s);
+  speckle(g,s,[152,144,126],44,12000);
+  stains(g,s,'70,66,58',16,40,140,.18);
+  stains(g,s,'190,185,170',10,30,90,.14);
+  g.strokeStyle='rgba(60,55,48,.5)'; g.lineWidth=1.5; // трещины
+  for(let i=0;i<9;i++){ g.beginPath(); let x=Math.random()*s,y=Math.random()*s; g.moveTo(x,y);
+    for(let j=0;j<6;j++){ x+=(Math.random()-.5)*90; y+=(Math.random()-.3)*70; g.lineTo(x,y); } g.stroke(); }
+  for(let i=0;i<6;i++){ // вертикальные потёки от дождя
+    const x=Math.random()*s, gr=g.createLinearGradient(x,0,x,s);
+    gr.addColorStop(0,'rgba(60,56,48,.25)'); gr.addColorStop(1,'rgba(60,56,48,0)');
+    g.fillStyle=gr; g.fillRect(x,0,3+Math.random()*5,s*(.4+Math.random()*.5));
+  }
+  grime(g,s);
+}, 3,1.5);
+// саман/кирпич: каждый кирпич своего оттенка, сколы
+const brickTex = tex((g,s)=>{
+  g.fillStyle='#7a5a3a'; g.fillRect(0,0,s,s);
+  const bh=52,bw=104;
+  for(let y=0;y<s;y+=bh){
+    const off=(y/bh)%2? bw/2:0;
+    for(let x=-bw;x<s+bw;x+=bw){
+      const t=Math.random();
+      g.fillStyle=`rgb(${150+t*45|0},${112+t*35|0},${70+t*25|0})`;
+      g.fillRect(x+off+3,y+3,bw-6,bh-6);
+      if(Math.random()<.15){ g.fillStyle='rgba(70,50,30,.5)'; g.fillRect(x+off+3,y+3,bw-6,bh-6); } // выщербленный
+      g.fillStyle='rgba(255,240,210,.12)'; g.fillRect(x+off+3,y+3,bw-6,4); // блик сверху
+    }
+  }
+  speckle(g,s,[160,125,85],40,7000);
+  stains(g,s,'60,44,26',12,40,120,.16);
+  grime(g,s);
+}, 3,1.5);
+// доски: сучки, волокна, гвозди
+const woodTex = tex((g,s)=>{
+  g.fillStyle='#7d5730'; g.fillRect(0,0,s,s);
+  for(let y=0;y<s;y+=86){
+    const t=Math.random();
+    g.fillStyle=`rgb(${115+t*45|0},${75+t*30|0},${38+t*18|0})`;
+    g.fillRect(0,y,s,82);
+    g.strokeStyle='rgba(45,28,12,.8)'; g.lineWidth=3; g.strokeRect(-2,y,s+4,82);
+    g.strokeStyle='rgba(60,38,16,.35)'; g.lineWidth=1.5; // волокна
+    for(let i=0;i<10;i++){ const yy=y+6+Math.random()*70; g.beginPath(); g.moveTo(0,yy); g.bezierCurveTo(s/3,yy+6,s*2/3,yy-6,s,yy+3); g.stroke(); }
+    for(let i=0;i<2;i++){ // сучки с кольцами
+      if(Math.random()<.6) continue;
+      const x=Math.random()*s, yy=y+20+Math.random()*45;
+      for(let r=9;r>1;r-=2.2){ g.strokeStyle=`rgba(40,24,10,${.25+r*.04})`; g.lineWidth=1.6; g.beginPath(); g.ellipse(x,yy,r*1.4,r,0,0,7); g.stroke(); }
+      g.fillStyle='rgba(30,18,8,.9)'; g.beginPath(); g.ellipse(x,yy,2.4,1.8,0,0,7); g.fill();
+    }
+    g.fillStyle='rgba(25,22,20,.9)'; // гвозди
+    g.beginPath(); g.arc(14,y+41,2.6,0,7); g.fill();
+    g.beginPath(); g.arc(s-14,y+41,2.6,0,7); g.fill();
+  }
+  speckle(g,s,[125,88,48],30,3500);
+},1,1);
+// металл: ржавые потёки
+const metalTex = tex((g,s)=>{
+  g.fillStyle='#59695c'; g.fillRect(0,0,s,s);
+  speckle(g,s,[89,105,92],30,8000);
+  for(let i=0;i<9;i++){ // ржавые потёки сверху вниз
+    const x=Math.random()*s, w=6+Math.random()*16, h=s*(.3+Math.random()*.6);
+    const gr=g.createLinearGradient(x,0,x,h);
+    gr.addColorStop(0,'rgba(150,70,35,.55)'); gr.addColorStop(1,'rgba(150,70,35,0)');
+    g.fillStyle=gr; g.fillRect(x,0,w,h);
+  }
+  stains(g,s,'160,70,40',12,10,40,.4);
+  g.strokeStyle='rgba(30,38,32,.6)'; g.lineWidth=3; // рёбра бочки
+  for(const y of [s*.25,s*.5,s*.75]){ g.beginPath(); g.moveTo(0,y); g.lineTo(s,y); g.stroke(); }
+},1,1);
 
 /* ═══════════ СЦЕНА ═══════════ */
 const stage=$('stage'), canvas=$('game');
@@ -680,22 +754,81 @@ addBlock(0,-H2, MAP,7,1, M_BRICK);
 addBlock(0, H2, MAP,7,1, M_BRICK);
 addBlock(-H2,0, 1,7,MAP, M_BRICK);
 addBlock( H2,0, 1,7,MAP, M_BRICK);
-// ── МИД: длинная стена с «двойными дверями» по центру ──
-addBlock(-23,-2, 36,4,1.4, M_CONC);
-addBlock( 23,-2, 36,4,1.4, M_CONC);
-// ── ЛОНГ (правый коридор к точке А) ──
+
+// ── помощники детализации ──
+function decoMesh(m){ m.castShadow=true; m.receiveShadow=true; scene.add(m); wallMeshes.push(m); return m; }
+// стена вдоль оси с дверными проёмами (косяки + перемычка сверху)
+function wallDoor(cx,cz,len,axis,doors,mat,h=3.6){
+  const DW=3.2, half=len/2;
+  const edges=[-half];
+  for(const d of doors.slice().sort((a,b)=>a-b)){ edges.push(d-DW/2, d+DW/2); }
+  edges.push(half);
+  for(let i=0;i<edges.length;i+=2){
+    const a=edges[i], b=edges[i+1], L=b-a;
+    if(L<=.2) continue;
+    const mid=(a+b)/2;
+    if(axis==='x') addBlock(cx+mid,cz, L,h,1.3, mat);
+    else addBlock(cx,cz+mid, 1.3,h,L, mat);
+  }
+  for(const d of doors){
+    // косяки
+    if(axis==='x'){ addBlock(cx+d-DW/2-.25,cz,.5,h,1.4,M_WOOD); addBlock(cx+d+DW/2+.25,cz,.5,h,1.4,M_WOOD); }
+    else { addBlock(cx,cz+d-DW/2-.25,1.4,h,.5,M_WOOD); addBlock(cx,cz+d+DW/2+.25,1.4,h,.5,M_WOOD); }
+    // перемычка над проёмом (декор, под ней можно пройти)
+    const lin=new THREE.Mesh(new THREE.BoxGeometry(axis==='x'?DW+1:1.4, h-2.3, axis==='x'?1.4:DW+1), M_WOOD);
+    lin.position.set(axis==='x'?cx+d:cx, 2.3+(h-2.3)/2, axis==='x'?cz:cz+d);
+    decoMesh(lin);
+  }
+}
+// крыша туннеля (декор + стопор для пуль, проходима снизу)
+function roofSlab(x,z,sx,sz,y=3){
+  const m=new THREE.Mesh(new THREE.BoxGeometry(sx,.35,sz), M_CONC);
+  m.position.set(x,y+.17,z); decoMesh(m);
+}
+// мешки с песком — низкое укрытие
+const sandbagMat=new THREE.MeshLambertMaterial({color:0x9a8a5c});
+function sandbags(x,z,len,axis){
+  for(let row=0;row<2;row++) for(let i=0;i<len;i++){
+    const off=(i-len/2)*.62+(row%2)*.3;
+    const b=new THREE.Mesh(new THREE.BoxGeometry(.6,.32,.4), sandbagMat);
+    if(axis==='x') b.position.set(x+off,.16+row*.3,z);
+    else b.position.set(x,.16+row*.3,z+off);
+    b.rotation.y=(Math.random()-.5)*.25;
+    decoMesh(b);
+  }
+  const L=len*.62;
+  if(axis==='x') solids.push({minx:x-L/2,maxx:x+L/2,minz:z-.3,maxz:z+.3,h:.7});
+  else solids.push({minx:x-.3,maxx:x+.3,minz:z-L/2,maxz:z+L/2,h:.7});
+}
+
+// ── МИД: две стены с дверями ──
+wallDoor(0,-2, 78,'x',[0],M_CONC);                 // двойные двери в центре
+wallDoor(0,14, 78,'x',[-13,13],M_CONC,3.2);        // вторая линия с двумя проходами
+// ── ЛОНГ (правый крытый коридор к точке А) ──
 addBlock(18,-24, 1.4,4,32, M_CONC);
 addBlock(31,-20, 1.4,4,28, M_CONC);
-addBlock(24,-38, 12,4,1.4, M_CONC);   // выход с лонга
-// ── БАНАН (левый изгиб к точке Б) ──
-addBlock(-18,4, 1.4,3.6,22, M_CONC);
-addBlock(-30,-14, 1.4,4,30, M_CONC);
-addBlock(-24,-32, 10,3.6,1.4, M_CONC);
-// ── центр: коннектор и укрытия ──
+wallDoor(24.5,-38, 14,'x',[0],M_CONC);             // дверь на выходе с лонга
+roofSlab(24.5,-20, 11.6,12);                       // ТУННЕЛЬ: крыша над серединой лонга
+roofSlab(24.5,-30, 11.6,8);
+// ── БАНАН (левый туннель к точке Б) ──
+addBlock(-18,2, 1.4,3.6,26, M_CONC);
+addBlock(-24.5,0, 1.4,3.6,22, M_CONC);
+roofSlab(-21.2,1, 5.4,18);                         // ТУННЕЛЬ Б: полностью крытый
+wallDoor(-21.2,-12, 8,'x',[0],M_CONC,3.4);         // дверь на выходе из туннеля
+addBlock(-30,-20, 1.4,4,20, M_CONC);
+wallDoor(-25,-31, 11,'x',[0],M_CONC);
+// ── КОМПАУНД: здание с комнатой в центре юга ──
+wallDoor(0,21, 14,'x',[-4],M_BRICK,3);             // северная стена, дверь слева
+wallDoor(0,31, 14,'x',[4],M_BRICK,3);              // южная стена, дверь справа
+addBlock(-7,26, 1.3,3,10, M_BRICK);                // западная
+wallDoor(7,26, 10,'z',[0],M_BRICK,3);              // восточная с дверью
+roofSlab(0,26, 14.6,10.6,3);                       // крыша здания
+// ── коннекторы и лабиринт центра ──
 addBlock(0,-16, 14,3,1.4, M_CONC);
-addBlock(8,12, 1.4,3,16, M_CONC);
-addBlock(-6,22, 18,2.6,1.4, M_CONC);
-// ── ТОЧКА A (северо-восток) и ТОЧКА B (северо-запад) ──
+addBlock(9,6, 1.4,3,14, M_CONC);
+addBlock(-9,-9, 1.4,2.8,12, M_CONC);
+wallDoor(12,-9, 12,'z',[2],M_CONC,3);
+// ── ТОЧКИ A и B ──
 function siteDecal(letter,x,z){
   const c=document.createElement('canvas'); c.width=c.height=256;
   const g2=c.getContext('2d');
@@ -708,29 +841,35 @@ function siteDecal(letter,x,z){
   scene.add(p);
 }
 siteDecal('A',28,-30); siteDecal('B',-28,-28);
-// низкие стенки вокруг плэнтов
 addBlock(34,-26, 1,1.6,10, M_CONC);
-addBlock(28,-23, 10,1.6,1, M_CONC);
 addBlock(-34,-24, 1,1.6,9, M_CONC);
-addBlock(-24,-22, 8,1.6,1, M_CONC);
-// ── ящики и укрытия по всей карте ──
+sandbags(28,-23,6,'x'); sandbags(-24,-22,5,'x');
+sandbags(4,-7,5,'x'); sandbags(-13,18,4,'z'); sandbags(15,24,5,'x');
+// ── ящики (с парой стопок) ──
 function crate(x,z,s=2,h=null){ addBlock(x,z,s,h||s,s,M_WOOD); }
 crate(3,6); crate(3,6.1,2,4);
-crate(-6,-10,2.4); crate(14,10,2); crate(14,12.2,2); crate(-16,4,2.2);
-crate(22,-12,2.4); crate(-9,18,2); crate(6,26,2.6); crate(-24,26,2.2);
+crate(-6,-12,2.4); crate(14,10,2); crate(14,12.2,2); crate(-16,6,2.2);
+crate(22,-12,2.4); crate(-9,18,2); crate(6,26,1.6); crate(-24,26,2.2);
 crate(0,-24,2.4); crate(-2.4,-24,2.4); crate(-1.2,-24,2.4,4.8);
-crate(28,-32,2.2); crate(30,-28,2); crate(-28,-32,2.2); crate(-30,-25,2);
+crate(28,-33,2.2); crate(31,-28,2); crate(-28,-32,2.2); crate(-31,-25,2);
 crate(36,14,2.6); crate(-36,10,2.4); crate(12,-34,2.2); crate(-12,-36,2.4);
-crate(38,-8,2); crate(-38,-4,2.2); crate(20,30,2.4); crate(-20,34,2);
+crate(38,-8,2); crate(-38,-4,2.2); crate(20,32,2.4); crate(-20,34,2);
+crate(24.5,-16,1.8); crate(-21,4,1.6); // внутри туннелей
+// поддоны у стен (декор)
+for(const [px,pz,ry] of [[10,-3.2,0],[-14,13,-.1],[30,-37,0],[-6,20.4,.08]]){
+  const p=new THREE.Mesh(new THREE.BoxGeometry(2.2,.14,1.6), M_WOOD);
+  p.position.set(px,.5,pz); p.rotation.set(-1.25,ry,0); decoMesh(p);
+}
 // бочки
 function barrel(x,z){
-  const m=new THREE.Mesh(new THREE.CylinderGeometry(.55,.55,1.5,12), new THREE.MeshLambertMaterial({map:metalTex}));
+  const m=new THREE.Mesh(new THREE.CylinderGeometry(.55,.55,1.5,14), new THREE.MeshLambertMaterial({map:metalTex}));
   m.position.set(x,.75,z); m.castShadow=true; m.receiveShadow=true;
   scene.add(m); wallMeshes.push(m);
   solids.push({minx:x-.55,maxx:x+.55,minz:z-.55,maxz:z+.55,h:1.5});
 }
-barrel(9,2); barrel(10.1,2.4); barrel(-13,-8); barrel(19,17); barrel(-20,-20);
-barrel(33,-34); barrel(-33,-30); barrel(25,-6); barrel(-8,30); barrel(40,28);
+barrel(9,2); barrel(10.1,2.4); barrel(-13,-6); barrel(19,17); barrel(-20,-20);
+barrel(33,-34); barrel(-33,-30); barrel(25,-6); barrel(-8,34); barrel(40,28);
+barrel(-2,26); // в здании
 
 /* ═══════════ ОРУЖИЕ: ДЕТАЛЬНЫЕ МОДЕЛИ ═══════════ */
 const gunGroup=new THREE.Group();
@@ -1175,16 +1314,38 @@ function upsertRemote(pid,d){
 function removeRemote(pid){ const r=remotes[pid]; if(!r) return; scene.remove(r.g); delete remotes[pid]; }
 function updateRoomChip(n){ const el=$('hud-room'); el.style.display=''; el.textContent=`Комната ${net.code} • игроков: ${n}`; }
 
-async function createRoom(){
+const pubUrl=code=>`${FIREBASE_DB_URL}/pew/pub/${code}.json`;
+async function quickPlay(){
+  if(!FIREBASE_DB_URL){ startRound(1); return; } // без базы — офлайн с ботами
+  try{
+    const r=await fetch(`${FIREBASE_DB_URL}/pew/pub.json`);
+    const v=r.ok?await r.json():null;
+    const now=Date.now();
+    let best=null;
+    if(v) for(const [code,info] of Object.entries(v)){
+      if(!info) continue;
+      if(now-(info.t||0)>60000){ fetch(pubUrl(code),{method:'DELETE'}); continue; } // чистим мёртвые
+      if(now-(info.t||0)<15000&&(info.n||0)<6&&(!best||(info.n||0)>best.n)) best={code,n:info.n||0};
+    }
+    if(best){
+      await joinRoom(best.code);
+      if(net.active){ net.public=true; return; }
+    }
+    await createRoom(true); // никого нет — открываем публичную комнату (с ботами)
+  }catch(e){ startRound(1); }
+}
+async function createRoom(isPublic){
   const alpha='ABCDEFGHJKMNPQRSTUVWXYZ23456789';
   net.code=Array.from({length:6},()=>alpha[Math.floor(Math.random()*alpha.length)]).join('');
   net.active=true; net.isHost=true; net.joinT=Date.now();
+  net.public=!!isPublic; net.lastPub=0;
   net.seenFeed.clear(); net.lastWinRound=0; net.lastDmg={};
   await rPUT('',{created:Date.now(),round:0,phase:'play'});
   writeSelf();
   hostStartRound(1);
   startNetLoop();
-  showMsg(`КОМНАТА ${net.code} — зови друзей!`,4000);
+  if(net.public){ fetch(pubUrl(net.code),{method:'PUT',body:JSON.stringify({t:Date.now(),n:1})}); showMsg('ОНЛАЙН-МАТЧ: ЖДЁМ ИГРОКОВ, БОТЫ УЖЕ ТУТ',3500); }
+  else showMsg(`КОМНАТА ${net.code} — зови друзей!`,4000);
   lockPointer();
 }
 async function joinRoom(code){
@@ -1228,6 +1389,10 @@ async function pollRoom(){
       }
       for(const pid in remotes) if(!snap.players||!snap.players[pid]) removeRemote(pid);
       updateRoomChip(fresh.length||1);
+      if(net.isHost&&net.public&&now-(net.lastPub||0)>3000){
+        net.lastPub=now;
+        fetch(pubUrl(net.code),{method:'PUT',body:JSON.stringify({t:now,n:fresh.length||1})});
+      }
       // хост = самый ранний живой по joinT
       fresh.sort((a,b)=>a.joinT-b.joinT);
       const hostPid=fresh.length?fresh[0].pid:net.pid;
@@ -1315,7 +1480,10 @@ function hostRoundWin(){
   setTimeout(()=>{ if(net.active&&net.isHost) hostStartRound(round+1); },3000);
 }
 addEventListener('beforeunload',()=>{
-  if(net.active){ try{ fetch(roomUrl('/players/'+net.pid),{method:'DELETE',keepalive:true}); }catch(e){} }
+  if(net.active){
+    try{ fetch(roomUrl('/players/'+net.pid),{method:'DELETE',keepalive:true}); }catch(e){}
+    if(net.isHost&&net.public){ try{ fetch(pubUrl(net.code),{method:'DELETE',keepalive:true}); }catch(e){} }
+  }
 });
 
 /* ═══════════ ЛИЧНЫЙ КАБИНЕТ ═══════════ */
@@ -1367,6 +1535,7 @@ let yaw=Math.PI, pitch=0;
 let hp=100, mag=12, reloading=false, reloadEnd=0;
 let lastShot=0, firing=false, zoomed=false;
 let recoil=0, bobT=0;
+let vy=0, jumpY=0, grounded=true; // прыжок
 const keys={};
 
 function insideSolid(x,z,r){
@@ -1561,7 +1730,7 @@ function localRoundReset(){
   grenades=profile.grenadeCap||3; updateGrenHUD();
   let ox=0;
   if(net.active){ let h=0; for(const c of net.pid) h=(h*31+c.charCodeAt(0))%997; ox=((h%7)-3)*2; } // разводим спауны тиммейтов
-  playerPos.set(ox,1.6,H2-5); yaw=Math.PI; pitch=0;
+  playerPos.set(ox,1.6,H2-5); yaw=Math.PI; pitch=0; vy=0; jumpY=0; grounded=true;
   $('hud-round').textContent=round;
 }
 function revive(){
@@ -1738,6 +1907,7 @@ addEventListener('wheel',e=>{
 },{passive:true});
 addEventListener('keydown',e=>{
   keys[e.code]=true;
+  if(e.code==='Space'&&state==='play') e.preventDefault(); // прыжок, не скролл
   // e.code работает независимо от раскладки (EN/RU)
   if(e.code==='KeyB'&&state!=='menu') toggleShop();
   if(e.code==='KeyR'&&state==='play') startReload(performance.now());
@@ -1769,6 +1939,13 @@ function loop(t){
       bobT+=dt*(run?13:9);
     }
     collide(playerPos,.5);
+    // прыжок
+    if(keys['Space']&&grounded){ vy=5.4; grounded=false; }
+    if(!grounded||jumpY>0){
+      jumpY+=vy*dt; vy-=14*dt;
+      if(jumpY<=0){ jumpY=0; vy=0; grounded=true; }
+    }
+    playerPos.y=1.6+jumpY;
     if(firing&&(WEAPONS[profile.equipped].auto||t-lastShot>WEAPONS[profile.equipped].rate)){
       tryShoot(t);
       if(!WEAPONS[profile.equipped].auto)firing=false;
@@ -1801,7 +1978,7 @@ function loop(t){
     }
   }
   camera.position.copy(playerPos);
-  camera.position.y=1.6+Math.sin(bobT)*.03;
+  camera.position.y=playerPos.y+(grounded?Math.sin(bobT)*.03:0);
   camera.rotation.order='YXZ';
   camera.rotation.y=yaw; camera.rotation.x=pitch+recoil;
   if(gunMesh){ gunMesh.position.y=-.22+Math.sin(bobT)*.008; gunMesh.rotation.x=recoil*2; }
@@ -1848,7 +2025,7 @@ async function ensureIdentity(){
   $('hud-wname').textContent=WEAPONS[profile.equipped].name;
   return true;
 }
-$('btn-start').onclick=async()=>{ if(await ensureIdentity()){ ac(); startRound(1); } };
+$('btn-start').onclick=async()=>{ if(await ensureIdentity()){ ac(); quickPlay(); } };
 $('btn-create').onclick=async()=>{
   $('room-err').textContent='';
   if(!FIREBASE_DB_URL){ $('room-err').textContent='Для онлайна нужен Firebase (FIREBASE_DB_URL в коде).'; return; }
